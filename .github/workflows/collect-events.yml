@@ -34,7 +34,7 @@ jobs:
 
       - name: Commit state if changed
         run: |
-          git add events-db.json events-active.json
+          git add -f events-db.json events-active.json
           if git diff --cached --quiet; then
             echo "無變化，不需 commit"
           else
