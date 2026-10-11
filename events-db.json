@@ -1,0 +1,24 @@
+{
+  "ids": {
+    "f82a22380b8ee427": {
+      "firstSeen": 1791730736.128,
+      "lastSeen": 1791730736.128,
+      "valid": true,
+      "name": "幸運轉轉樂",
+      "begin": 1595210400,
+      "end": 1595218753,
+      "foundVia": "search",
+      "alerted": []
+    },
+    "91744938b0f7d583": {
+      "firstSeen": 1791730736.713,
+      "lastSeen": 1791730736.713,
+      "valid": true,
+      "name": "🎇雙十慶轉好運🎆",
+      "begin": 1791561600,
+      "end": 1791647940,
+      "foundVia": "search",
+      "alerted": []
+    }
+  }
+}
