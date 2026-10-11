@@ -3,3 +3,6 @@ node_modules/
 monitor.out
 events-active.json
 .DS_Store
+feed-data.jsonl
+dash.out
+dash.err

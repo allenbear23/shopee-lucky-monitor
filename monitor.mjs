@@ -20,11 +20,12 @@
 // ============================================================================
 
 import { setTimeout as sleep } from "node:timers/promises";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, statSync } from "node:fs";
 
 const EVENT = "1851933cb3be1af7";
 const APPID = "9bv5119Po61HKw0Tdn"; // 從前端 bundle 解出的 appid
 const DRAWMOD = 391057; // Service.LUCKY_DRAW module_id
+const DATA_FILE = "feed-data.jsonl"; // 每輪統計 → 供 dashboard 讀取畫圖
 const UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 const FEED_URL = `https://games.shopee.tw/gameplatform/api/v2/goluckydraw/prize/list/module/${DRAWMOD}?appid=${APPID}&offset=%d&limit=100`;
@@ -78,6 +79,18 @@ function log(msg) {
   try { appendFileSync("monitor.log", line + "\n"); } catch {}
 }
 
+// 每輪統計寫入 JSONL（dashboard 讀取畫圖）；過大時裁掉舊資料
+function pushData(obj) {
+  try {
+    appendFileSync(DATA_FILE, JSON.stringify(obj) + "\n");
+    const st = statSync(DATA_FILE);
+    if (st.size > 8 * 1024 * 1024) {
+      const lines = readFileSync(DATA_FILE, "utf8").split("\n");
+      writeFileSync(DATA_FILE, lines.slice(-40000).join("\n"));
+    }
+  } catch {}
+}
+
 async function getJson(url) {
   const r = await fetch(url, { headers: { "User-Agent": UA, Referer: `https://games.shopee.tw/sellerlck/event/${EVENT}` } });
   const txt = await r.text();
@@ -117,6 +130,7 @@ async function sendBark(title, body, group = "shopee-lucky") {
     const r = await fetch(url);
     const t = await r.text();
     log(`📲 Bark 已送出 (${r.status}) ${t.slice(0, 120)}`);
+    if (r.ok) pushData({ t: now(), type: "alert", title, body: body.slice(0, 300), group });
     return r.ok;
   } catch (e) {
     log(`❌ Bark 送出失敗: ${e.message}`);
@@ -173,6 +187,7 @@ async function oneCycle() {
     const enough = total >= CFG.minWinners;
     const hitBurst = enough && non.length >= CFG.burst;
     const hitFrac = enough && frac >= CFG.frac * 100;
+    let alerted = 0;
     if ((hitBurst || hitFrac) && now() - lastAlert >= CFG.cooldown) {
       lastAlert = now();
       const title = hitBurst ? `🔥 大量非1幣中獎 (${non.length}/${total})` : `🔥 非1幣佔比異常 (${frac.toFixed(1)}%)`;
@@ -181,7 +196,15 @@ async function oneCycle() {
         `組成：1幣${nCoin1} | 30券${n30} | 50券${n50} | 100券${n100} | 10幣${nCoin10}。` +
         `feed落後${lag}s，離活動結束≈${leftMin}分`;
       await sendBark(title, body);
+      alerted = 1;
     }
+    pushData({
+      t: now(), mode: "active",
+      lag: Math.round(lag), stale: stale ? 1 : 0,
+      win: CFG.window, total, non: non.length, frac: +frac.toFixed(1),
+      n1: nCoin1, n30, n50, n100, n10,
+      leftMin, alert: alerted,
+    });
     return "ok";
   } catch (e) {
     if (++failStreak === 3) await sendBark("⚠ 監視器連線失敗", e.message.slice(0, 200));
@@ -219,6 +242,7 @@ async function idleScan() {
         return;
       }
       log("⏳ 待機中…（每 5 分鐘掃描新場次）");
+      pushData({ t: now(), mode: "idle" });
     } catch (e) {
       log(`❌ 待機掃描失敗: ${e.message.slice(0, 120)}`);
     }
