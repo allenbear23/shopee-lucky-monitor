@@ -208,11 +208,19 @@ async function oneCycle() {
     let alerted = 0;
     if ((hitBurst || hitFrac) && now() - lastAlert >= CFG.cooldown) {
       lastAlert = now();
-      const title = hitBurst ? `🔥 大量非1幣中獎 (${non.length}/${total})` : `🔥 非1幣佔比異常 (${frac.toFixed(1)}%)`;
+      const pct = (n) => (total ? ((n / total) * 100).toFixed(1) : "0.0");
+      // 機率基準：用這次抓回的全部中獎列（近數分鐘、不重複）當「平時」基準
+      const baseTotal = rows.length;
+      const baseNon = rows.filter(isNonCoin).length;
+      const baseFrac = baseTotal ? (baseNon / baseTotal) * 100 : 0;
+      const ratioTxt = baseFrac > 0 ? (frac / baseFrac).toFixed(1) : "?";
+      const title = `🔥 非1幣率 ${frac.toFixed(1)}%（平時 ${baseFrac.toFixed(1)}%，${ratioTxt}×）`;
       const body =
-        `近${CFG.window}秒 ${total} 人中獎：非1幣 ${non.length} 筆。` +
-        `組成：1幣${nCoin1} | 30券${n30} | 50券${n50} | 100券${n100} | 10幣${nCoin10}。` +
-        `feed落後${Math.round(lag)}s，離活動結束≈${leftMin == null ? "?" : leftMin}分`;
+        `近${CFG.window}秒 ${total} 人中獎，非1幣 ${non.length} 筆＝${frac.toFixed(1)}%` +
+        `（平時約 ${baseFrac.toFixed(1)}%，現在 ${ratioTxt} 倍）\n` +
+        `各獎率：1幣 ${pct(nCoin1)}%｜30券 ${pct(n30)}%｜50券 ${pct(n50)}%｜100券 ${pct(n100)}%｜10幣 ${pct(nCoin10)}%\n` +
+        `※ 機率＝中獎者中該獎的佔比（中獎榜只列中獎者）\n` +
+        `feed落後${Math.round(lag)}s，離結束≈${leftMin == null ? "?" : leftMin}分`;
       await sendBark(title, body);
       alerted = 1;
     }
