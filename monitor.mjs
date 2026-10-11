@@ -74,6 +74,7 @@ let failStreak = 0;
 let announcedEnd = false;
 let feedMode = false;      // true = event id 已換（舊 id 顯示結束但 feed 仍在滾），改以 feed 活動判斷
 let staleCycles = 0;       // feed 模式：連續幾輪沒有新鮮中獎
+let sawActive = false;     // 這次啟動是否真的監視過進行中的活動（避免剛啟動就對「已結束」補發通知）
 const ACTIVE_LAG = 120;    // feed「正在滾動」判定：最新中獎距今 ≤ 此秒數才算新場次（原本 900 太寬會誤判）
 const FEED_END_LAG = 1800; // feed 模式：落後 > 此秒數（30 分）→ 視為本場結束
 
@@ -160,7 +161,7 @@ async function oneCycle() {
       const st = await getEventStatus();
       if (st.ended) {
         if (!feedFresh) {
-          if (!announcedEnd) {
+          if (sawActive && !announcedEnd) {
             announcedEnd = true;
             await sendBark(
               "🎉 活動已結束",
@@ -173,10 +174,12 @@ async function oneCycle() {
         // 舊 id 仍顯示結束，但 feed 恢復滾動 → 新場次（新 event id）
         feedMode = true;
         announcedEnd = false;
+        sawActive = true;
         log("🆕 舊 event id 仍顯示結束，但 feed 恢復滾動 → 改用 feed 追蹤新場次");
         await sendBark("🆕 幸運蝦轉盤新場次開跑", "中獎榜恢復滾動（新的 event id）。監視器已自動接上。");
       } else {
         left = st.left;
+        sawActive = true;
       }
     }
 
