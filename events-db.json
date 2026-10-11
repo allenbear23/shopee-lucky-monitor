@@ -2,7 +2,7 @@
   "ids": {
     "f82a22380b8ee427": {
       "firstSeen": 1791730736.128,
-      "lastSeen": 1791730736.128,
+      "lastSeen": 1791750131.903,
       "valid": true,
       "name": "幸運轉轉樂",
       "begin": 1595210400,
@@ -12,12 +12,52 @@
     },
     "91744938b0f7d583": {
       "firstSeen": 1791730736.713,
-      "lastSeen": 1791730736.713,
+      "lastSeen": 1791750132.541,
       "valid": true,
       "name": "🎇雙十慶轉好運🎆",
       "begin": 1791561600,
       "end": 1791647940,
       "foundVia": "search",
+      "alerted": []
+    },
+    "de5fdba28a6d3c79": {
+      "firstSeen": 1791750133.189,
+      "lastSeen": 1791750133.189,
+      "valid": true,
+      "name": "小廚師的命運輪盤",
+      "begin": 1688961600,
+      "end": 1690819140,
+      "foundVia": "ddg",
+      "alerted": []
+    },
+    "8a0b38b99d1a39f9": {
+      "firstSeen": 1791750133.825,
+      "lastSeen": 1791750133.825,
+      "valid": true,
+      "name": "9/7-9/8 小菲戰隊大優惠",
+      "begin": 1694016000,
+      "end": 1694188740,
+      "foundVia": "ddgLite",
+      "alerted": []
+    },
+    "6f4389e4b37bb8cc": {
+      "firstSeen": 1791750134.465,
+      "lastSeen": 1791750134.465,
+      "valid": true,
+      "name": "💰每日獎品💰",
+      "begin": 1709247600,
+      "end": 1709870402,
+      "foundVia": "ddgLite",
+      "alerted": []
+    },
+    "1851933cb3be1af7": {
+      "firstSeen": 1791750135.088,
+      "lastSeen": 1791750135.088,
+      "valid": true,
+      "name": "抽中神券換新季 立即下單數量有限 分享3次中獎翻倍",
+      "begin": 1791648000,
+      "end": 1791734340,
+      "foundVia": "known",
       "alerted": []
     }
   }
