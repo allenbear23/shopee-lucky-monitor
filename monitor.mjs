@@ -277,6 +277,7 @@ async function main() {
   }
   // 主迴圈（async while 取代 setInterval，支援待機/長間隔切換）
   while (true) {
+    const t0 = Date.now();
     const r = await oneCycle();
     if (r === "ended") {
       if (!CFG.keepAlive) { log("活動結束，監視器退出。"); process.exit(0); }
@@ -284,7 +285,9 @@ async function main() {
       await idleScan(); // 直到找到新場次才回傳
       continue;
     }
-    await sleep(CFG.interval * 1000);
+    // 讓「整輪週期」貼齊 interval：睡眠扣除本輪耗時（抓取較久時自動少睡）
+    const dt = (Date.now() - t0) / 1000;
+    await sleep(Math.max(0, CFG.interval - dt) * 1000);
   }
 }
 
