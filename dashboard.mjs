@@ -176,14 +176,14 @@ async function load(){
   try{
     const r=await fetch("/api/feed?minutes="+minutes);
     const d=await r.json();
-    $("status").textContent="更新 "+(new Date(d.now*1000).toLocaleString("zh-TW",{hour12:false}))+" ｜ 資料點 "+d.series.length+" ｜ 活動剩餘 "+(d.latest&&d.latest.mode!=="idle"?(d.latest.leftMin+" 分"):"待機(等隔天場次)");
+    $("status").textContent="更新 "+(new Date(d.now*1000).toLocaleString("zh-TW",{hour12:false}))+" ｜ 資料點 "+d.series.length+" ｜ "+(d.latest?(d.latest.mode==="idle"?"待機(等隔天場次)":(d.latest.leftMin!=null?"活動剩餘 "+d.latest.leftMin+" 分":"🟢 監視中 (feed 模式)")):"無資料");
     const l=d.latest||{};
     $("c-mode").textContent=l.mode==="idle"?"😴待機":(l.mode==="active"?"🟢監視中":"?");
     $("c-total").textContent=(l.total??"-")
     $("c-non").textContent=(l.non??"-")
     $("c-frac").textContent=(l.frac??"-")+"%"
     $("c-lag").textContent=(l.lag??"-")+"s"
-    $("c-left").textContent=(l.mode!=="idle"?(l.leftMin??"-")+"分":"—")
+    $("c-left").textContent=(l.mode==="idle"?"—":(l.leftMin!=null?l.leftMin+"分":"feed"))
     refresh({el:"ch-total",data:d,type:"all"});
     refresh({el:"ch-frac",data:d,type:"frac"});
     refresh({el:"ch-compo",data:d,type:"compo"});

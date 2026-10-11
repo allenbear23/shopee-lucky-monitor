@@ -72,6 +72,10 @@ const fmt = (t) => new Date(t * 1000).toLocaleString("zh-TW", { timeZone: "Asia/
 let lastAlert = 0;
 let failStreak = 0;
 let announcedEnd = false;
+let feedMode = false;      // true = event id 已換（舊 id 顯示結束但 feed 仍在滾），改以 feed 活動判斷
+let staleCycles = 0;       // feed 模式：連續幾輪沒有新鮮中獎
+const ACTIVE_LAG = 120;    // feed「正在滾動」判定：最新中獎距今 ≤ 此秒數才算新場次（原本 900 太寬會誤判）
+const FEED_END_LAG = 1800; // feed 模式：落後 > 此秒數（30 分）→ 視為本場結束
 
 function log(msg) {
   const line = `[${new Date().toLocaleTimeString("zh-TW", { hour12: false })}] ${msg}`;
@@ -138,34 +142,48 @@ async function sendBark(title, body, group = "shopee-lucky") {
   }
 }
 
-async function checkSettings() {
-  // 活動倒數（每日活動，結束後停；24/7 模式則進入待機等待新場次）
+async function getEventStatus() {
+  // 只讀活動狀態，不做任何通知副作用（通知統一在 oneCycle 處理）
   const d = (await getJson(SETTINGS_URL)).data;
   const left = d.basic.end_time - now();
-  if (left < 0) {
-    if (!announcedEnd) {
-      announcedEnd = true;
-      await sendBark(
-        "🎉 活動已結束",
-        "幸運蝦轉盤已於 " + fmt(d.basic.end_time) + " 結束。" +
-        (CFG.keepAlive ? "進入 24h 待機，偵測到新場次會自動接上並通知。" : "停止監視。")
-      );
-    }
-    return "ended";
-  }
-  return { left, end: fmt(d.basic.end_time), data: d };
+  return { ended: left < 0, left, end: fmt(d.basic.end_time), data: d };
 }
 
 async function oneCycle() {
   try {
-    const st = await checkSettings();
-    if (st === "ended") return "ended";
-
     const { rows, lag } = await fetchRecent();
+    const feedFresh = rows.length > 0 && lag <= ACTIVE_LAG; // feed 是否「正在滾動」
+
+    // 活動狀態：以 settings 為準；若舊 event id 已結束、但 feed 仍在滾 → 換場次（新 id）轉 feed 模式
+    let left = null;
+    if (!feedMode) {
+      const st = await getEventStatus();
+      if (st.ended) {
+        if (!feedFresh) {
+          if (!announcedEnd) {
+            announcedEnd = true;
+            await sendBark(
+              "🎉 活動已結束",
+              "幸運蝦轉盤已於 " + st.end + " 結束。" +
+              (CFG.keepAlive ? "進入 24h 待機，偵測到新場次會自動接上並通知。" : "停止監視。")
+            );
+          }
+          return "ended";
+        }
+        // 舊 id 仍顯示結束，但 feed 恢復滾動 → 新場次（新 event id）
+        feedMode = true;
+        announcedEnd = false;
+        log("🆕 舊 event id 仍顯示結束，但 feed 恢復滾動 → 改用 feed 追蹤新場次");
+        await sendBark("🆕 幸運蝦轉盤新場次開跑", "中獎榜恢復滾動（新的 event id）。監視器已自動接上。");
+      } else {
+        left = st.left;
+      }
+    }
+
     if (!rows.length) {
       if (++failStreak === 3) await sendBark("⚠ 監視器抓不到資料", "連續 3 輪 feed 為空，請檢查網路。");
       log(`⚠ feed 回空（連續 ${failStreak} 次）`);
-      return;
+      return "err";
     }
     failStreak = 0;
 
@@ -179,9 +197,9 @@ async function oneCycle() {
     const n100 = inWin.filter((r) => r.package_name.includes("100")).length;
     const nCoin10 = inWin.filter((r) => isNonCoin(r) && r.prize_type === 2).length;
     const frac = total ? (non.length / total) * 100 : 0;
-    const leftMin = Math.round((st.left ?? 0) / 60);
+    const leftMin = left == null ? null : Math.round(left / 60);
 
-    log(`feed lag=${Math.round(lag)}s${stale} | 近${CFG.window}s: ${total}中獎, 非1幣=${non.length}(${frac.toFixed(1)}%) [1幣${nCoin1}/30券${n30}/50券${n50}/100券${n100}/10幣${nCoin10}] | 距結束≈${leftMin}分`);
+    log(`feed lag=${Math.round(lag)}s${stale} | 近${CFG.window}s: ${total}中獎, 非1幣=${non.length}(${frac.toFixed(1)}%) [1幣${nCoin1}/30券${n30}/50券${n50}/100券${n100}/10幣${nCoin10}] | ${feedMode ? "feed模式" : "距結束≈" + leftMin + "分"}`);
 
     // burst 判斷
     const enough = total >= CFG.minWinners;
@@ -194,7 +212,7 @@ async function oneCycle() {
       const body =
         `近${CFG.window}秒 ${total} 人中獎：非1幣 ${non.length} 筆。` +
         `組成：1幣${nCoin1} | 30券${n30} | 50券${n50} | 100券${n100} | 10幣${nCoin10}。` +
-        `feed落後${Math.round(lag)}s，離活動結束≈${leftMin}分`;
+        `feed落後${Math.round(lag)}s，離活動結束≈${leftMin == null ? "?" : leftMin}分`;
       await sendBark(title, body);
       alerted = 1;
     }
@@ -205,6 +223,18 @@ async function oneCycle() {
       n1: nCoin1, n30, n50, n100, n10: nCoin10,
       leftMin, alert: alerted,
     });
+
+    // feed 模式：靠 feed 新鮮度判斷本場是否結束（連續多輪落後超過門檻）
+    if (feedMode) {
+      if (lag <= FEED_END_LAG) staleCycles = 0;
+      else if (++staleCycles >= 3) {
+        log(`🎉 feed 停止滾動（落後 ${Math.round(lag)}s）→ 本場結束，進入待機`);
+        feedMode = false;
+        staleCycles = 0;
+        announcedEnd = false;
+        return "ended";
+      }
+    }
     return "ok";
   } catch (e) {
     if (++failStreak === 3) await sendBark("⚠ 監視器連線失敗", e.message.slice(0, 200));
@@ -223,20 +253,22 @@ async function idleScan() {
     try {
       // 1) 同一 event 是否滾到新的一天
       try {
-        const st = await checkSettings();
-        if (st !== "ended") {
+        const st = await getEventStatus();
+        if (!st.ended) {
           announcedEnd = false;
+          feedMode = false;
           const begin = st.data?.basic?.begin_time;
           log(`🆕 偵測到新場次（同一 event id，${fmt(begin)} 開始，結束 ${st.end}）`);
           await sendBark("🆕 幸運蝦轉盤新場次開跑", `${fmt(begin)} 開跑，結束 ${st.end}。監視器已自動接上。`);
           return;
         }
       } catch { /* event id 失效 → 走 feed 偵測 */ }
-      // 2) feed 是否又活了（event ID 換掉的場合）
+      // 2) feed 是否真的在滾（必須夠新鮮；舊場次殘留的中獎不算）
       const { rows, lag } = await fetchRecent(1);
-      if (rows.length && now() - Math.max(...rows.map((r) => r.lucky_time)) <= 900) {
+      if (rows.length && lag <= ACTIVE_LAG) {
         announcedEnd = false;
         failStreak = 0;
+        feedMode = true;
         log(`🆕 偵測到新場次（feed 恢復滾動，event ID 未知，lag=${Math.round(lag)}s）`);
         await sendBark("🆕 偵測到新場次開跑", "中獎榜開始滾動（新的一天活動）。監視器已自動接上。");
         return;
@@ -266,8 +298,8 @@ async function main() {
     await oneCycle();
     process.exit(0);
   }
-  const st = await checkSettings().catch(() => null);
-  const active = st !== null && st !== "ended";
+  const st = await getEventStatus().catch(() => null);
+  const active = st !== null && !st.ended;
   log(`🎯 開始監視。活動剩餘: ${active ? Math.round(st.left / 60) + " 分" : "待機/未知"}（結束 ${active ? st.end : "-"}）`);
   log(`設定 window=${CFG.window}s burst=${CFG.burst} frac=${CFG.frac} minWinners=${CFG.minWinners} cooldown=${CFG.cooldown}s interval=${CFG.interval}s` + (CFG.keepAlive ? " keepAlive=on(24h)" : ""));
   if (active) {
