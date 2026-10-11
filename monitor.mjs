@@ -61,6 +61,8 @@ const CFG = {
   ttl: +arg("ttl", process.env.BARK_TTL || 600), // 通知在手機上保留秒數(-> 分, Bark ttl 單位=秒)
   test: process.argv.includes("--test"),
   once: process.argv.includes("--once"),
+  // 24/7 模式：活動結束不退出，待機並自動偵測「新一天的新場次」再繼續盯
+  keepAlive: process.argv.includes("--keep-alive"),
 };
 const isNonCoin = (r) => r.package_name !== "1 活動蝦幣"; // 券 + 10幣 都算
 const now = () => Date.now() / 1000;
@@ -123,21 +125,27 @@ async function sendBark(title, body, group = "shopee-lucky") {
 }
 
 async function checkSettings() {
-  // 活動倒數（每日活動，結束後停止）
+  // 活動倒數（每日活動，結束後停；24/7 模式則進入待機等待新場次）
   const d = (await getJson(SETTINGS_URL)).data;
   const left = d.basic.end_time - now();
-  if (left < 0 && !announcedEnd) {
-    announcedEnd = true;
-    await sendBark("🎉 活動已結束", "幸運蝦轉盤已於 " + fmt(d.basic.end_time) + " 結束，停止監視。");
+  if (left < 0) {
+    if (!announcedEnd) {
+      announcedEnd = true;
+      await sendBark(
+        "🎉 活動已結束",
+        "幸運蝦轉盤已於 " + fmt(d.basic.end_time) + " 結束。" +
+        (CFG.keepAlive ? "進入 24h 待機，偵測到新場次會自動接上並通知。" : "停止監視。")
+      );
+    }
     return "ended";
   }
-  return { left, end: fmt(d.basic.end_time) };
+  return { left, end: fmt(d.basic.end_time), data: d };
 }
 
 async function oneCycle() {
   try {
     const st = await checkSettings();
-    if (st === "ended") { log("活動結束，監視器退出。"); process.exit(0); }
+    if (st === "ended") return "ended";
 
     const { rows, lag } = await fetchRecent();
     if (!rows.length) {
@@ -174,9 +182,46 @@ async function oneCycle() {
         `feed落後${lag}s，離活動結束≈${leftMin}分`;
       await sendBark(title, body);
     }
+    return "ok";
   } catch (e) {
     if (++failStreak === 3) await sendBark("⚠ 監視器連線失敗", e.message.slice(0, 200));
     log(`❌ 本輪失敗: ${e.message.slice(0, 160)}（連續 ${failStreak}）`);
+    return "err";
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 24/7 待機：定時掃描「新一天的新場次」
+// 偵測方式 1: 同一個 event ID 的 settings 滾到新的一天（begin_time 是今天）
+// 偵測方式 2: 中獎榜 feed 恢復滾動（event ID 每天換的場合，靠 feed 判斷即可）
+async function idleScan() {
+  while (true) {
+    await sleep(300_000); // 每 5 分鐘掃一次
+    try {
+      // 1) 同一 event 是否滾到新的一天
+      try {
+        const st = await checkSettings();
+        if (st !== "ended") {
+          announcedEnd = false;
+          const begin = st.data?.basic?.begin_time;
+          log(`🆕 偵測到新場次（同一 event id，${fmt(begin)} 開始，結束 ${st.end}）`);
+          await sendBark("🆕 幸運蝦轉盤新場次開跑", `${fmt(begin)} 開跑，結束 ${st.end}。監視器已自動接上。`);
+          return;
+        }
+      } catch { /* event id 失效 → 走 feed 偵測 */ }
+      // 2) feed 是否又活了（event ID 換掉的場合）
+      const { rows, lag } = await fetchRecent(1);
+      if (rows.length && now() - Math.max(...rows.map((r) => r.lucky_time)) <= 900) {
+        announcedEnd = false;
+        failStreak = 0;
+        log(`🆕 偵測到新場次（feed 恢復滾動，event ID 未知，lag=${Math.round(lag)}s）`);
+        await sendBark("🆕 偵測到新場次開跑", "中獎榜開始滾動（新的一天活動）。監視器已自動接上。");
+        return;
+      }
+      log("⏳ 待機中…（每 5 分鐘掃描新場次）");
+    } catch (e) {
+      log(`❌ 待機掃描失敗: ${e.message.slice(0, 120)}`);
+    }
   }
 }
 
@@ -198,12 +243,25 @@ async function main() {
     process.exit(0);
   }
   const st = await checkSettings().catch(() => null);
-  log(`🎯 開始監視。活動剩餘: ${st?.left ? Math.round(st.left / 60) + " 分" : "?"}（結束 ${st?.end ?? "?"}）`);
-  log(`設定 window=${CFG.window}s burst=${CFG.burst} frac=${CFG.frac} minWinners=${CFG.minWinners} cooldown=${CFG.cooldown}s interval=${CFG.interval}s`);
-  await sendBark("📡 監視器上線", `開始監視幸運蝦轉盤，每 ${CFG.interval} 秒一輪。非1幣大量出現時會通知。`);
-  await oneCycle();
-  setInterval(oneCycle, CFG.interval * 1000);
-  process.on("SIGINT", async () => { log("👋 收到中斷，退出。"); process.exit(0); });
+  const active = st !== null && st !== "ended";
+  log(`🎯 開始監視。活動剩餘: ${active ? Math.round(st.left / 60) + " 分" : "待機/未知"}（結束 ${active ? st.end : "-"}）`);
+  log(`設定 window=${CFG.window}s burst=${CFG.burst} frac=${CFG.frac} minWinners=${CFG.minWinners} cooldown=${CFG.cooldown}s interval=${CFG.interval}s` + (CFG.keepAlive ? " keepAlive=on(24h)" : ""));
+  if (active) {
+    await sendBark("📡 監視器上線", `開始監視幸運蝦轉盤，每 ${CFG.interval} 秒一輪。非1幣大量出現時會通知。`);
+  } else if (CFG.keepAlive) {
+    log("⏳ 目前無進行中場次 → 進入 24h 待機，偵測到新場次開跑會自動接上。");
+  }
+  // 主迴圈（async while 取代 setInterval，支援待機/長間隔切換）
+  while (true) {
+    const r = await oneCycle();
+    if (r === "ended") {
+      if (!CFG.keepAlive) { log("活動結束，監視器退出。"); process.exit(0); }
+      log("🎉 本場結束 → 進入 24h 待機（每 5 分鐘掃描新場次）。");
+      await idleScan(); // 直到找到新場次才回傳
+      continue;
+    }
+    await sleep(CFG.interval * 1000);
+  }
 }
 
 main().catch((e) => { console.error("❌ 啟動失敗", e); process.exit(1); });
