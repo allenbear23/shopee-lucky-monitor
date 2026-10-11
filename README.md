@@ -14,6 +14,16 @@
   `https://api.github.com/repos/<owner>/<repo>/actions/workflows/shopee-monitor.yml/dispatches`
   （header `Authorization: Bearer <PAT>`，body `{"ref":"main"}`，PAT 需 `actions: write`）
 
+## 全平台轉盤收集器（公開連結）
+
+- `collect-events.mjs`：搜尋引擎(DuckDuckGo HTML)撈 `games.shopee.tw/sellerlck/event/{hex}`
+  公開連結 → 撈每個活動的 settings → 分類「進行中/未開/已結束」→ 新偵測到且進行中的
+  轉盤 Bark 通知（一場一次，按 begin_time 當場次 key）。
+- `.github/workflows/collect-events.yml`：每 2 小時跑一輪；`events-db.json`（去重狀態）
+  會 commit 回 repo，所以跨 run 不會重複通知。
+- 限制：沒有官方「列出所有活動」API、event id 是稀疏 uint64 無法盲掃 → 只能收集
+  「被人分享過且被索引到」的轉盤，做不到全量。單一賣場的每日轉盤仍由監視器 24/7 處理。
+
 ---
 
 ## 一、這是什麼（確定）

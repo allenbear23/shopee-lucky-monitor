@@ -1,0 +1,43 @@
+name: Shopee Event Collector
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每 2 小時一輪（UTC 偶數時 → 臺北 08:23/10:23/…/06:23）
+    - cron: "23 */2 * * *"
+
+permissions:
+  contents: write # 需要把 events-db.json（去重狀態）寫回 repo
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Pull latest state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
+
+      - name: Collect public event links
+        env:
+          TZ: "Asia/Taipei"
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+        run: |
+          node collect-events.mjs --state ./events-db.json
+
+      - name: Commit state if changed
+        run: |
+          git add events-db.json events-active.json
+          if git diff --cached --quiet; then
+            echo "無變化，不需 commit"
+          else
+            git commit -q -m "collect: events update $(date +%FT%T%z)"
+            git push origin main
+          fi
