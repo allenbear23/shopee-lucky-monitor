@@ -6,3 +6,4 @@ events-active.json
 feed-data.jsonl
 dash.out
 dash.err
+monitor.err
