@@ -194,7 +194,7 @@ async function oneCycle() {
       const body =
         `近${CFG.window}秒 ${total} 人中獎：非1幣 ${non.length} 筆。` +
         `組成：1幣${nCoin1} | 30券${n30} | 50券${n50} | 100券${n100} | 10幣${nCoin10}。` +
-        `feed落後${lag}s，離活動結束≈${leftMin}分`;
+        `feed落後${Math.round(lag)}s，離活動結束≈${leftMin}分`;
       await sendBark(title, body);
       alerted = 1;
     }
@@ -202,7 +202,7 @@ async function oneCycle() {
       t: now(), mode: "active",
       lag: Math.round(lag), stale: stale ? 1 : 0,
       win: CFG.window, total, non: non.length, frac: +frac.toFixed(1),
-      n1: nCoin1, n30, n50, n100, n10,
+      n1: nCoin1, n30, n50, n100, n10: nCoin10,
       leftMin, alert: alerted,
     });
     return "ok";
