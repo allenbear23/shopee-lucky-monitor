@@ -93,10 +93,12 @@ canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
 .alerts li{list-style:none;margin:4px 0;padding:6px 8px;border-radius:6px;background:#15202b}
 .alerts .tm{color:var(--sub);margin-right:8px} .alert-ico{color:var(--red)}
 #status{color:var(--sub);font-size:12px;margin-bottom:10px}
+.banner{display:none;background:#3a2a12;border:1px solid #7a5a1a;color:#ffcf7a;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;font-weight:600}
 </style>
 </head>
 <body>
 <h1>🦐 幸運蝦轉盤 — 即時監視</h1>
+<div id="banner" class="banner"></div>
 <div class="sub" id="status">載入中…</div>
 <div class="cards">
   <div class="card"><div class="k">模式</div><div class="v" id="c-mode">-</div></div>
@@ -178,6 +180,12 @@ async function load(){
     const d=await r.json();
     $("status").textContent="更新 "+(new Date(d.now*1000).toLocaleString("zh-TW",{hour12:false}))+" ｜ 資料點 "+d.series.length+" ｜ "+(d.latest?(d.latest.mode==="idle"?"待機(等隔天場次)":(d.latest.leftMin!=null?"活動剩餘 "+d.latest.leftMin+" 分":"🟢 監視中 (feed 模式)")):"無資料");
     const l=d.latest||{};
+    const ageSec=l.t?(d.now-l.t):999999;
+    const idleNow=!l.t||l.mode==="idle";
+    if(idleNow||ageSec>300){
+      const b=$("banner"); b.style.display="block";
+      b.textContent="⏸ 目前無即時資料"+(l.t?("（最後更新 "+Math.round(ageSec/60)+" 分鐘前）"):"")+" — 活動已結束，監視器待機中；新場次一開會自動接上並通知";
+    } else { $("banner").style.display="none"; }
     $("c-mode").textContent=l.mode==="idle"?"😴待機":(l.mode==="active"?"🟢監視中":"?");
     $("c-total").textContent=(l.total??"-")
     $("c-non").textContent=(l.non??"-")
