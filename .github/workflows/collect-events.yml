@@ -30,7 +30,7 @@ jobs:
           TZ: "Asia/Taipei"
           BARK_KEY: ${{ secrets.BARK_KEY }}
         run: |
-          node collect-events.mjs --state ./events-db.json
+          node collect-events.mjs --state ./events-db.json --ids 1851933cb3be1af7
 
       - name: Commit state if changed
         run: |
