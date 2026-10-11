@@ -13,6 +13,7 @@
 // 用法 :
 //   BARK_KEY=xxx node collect-events.mjs                    # 跑一輪就結束
 //   node collect-events.mjs --once --ids 1851933cb3be1af7   # 指定既有場次一起查
+//   node collect-events.mjs --urls "<FB/LINE 分享連結貼一串>"  # 你看到就餵
 //   node collect-events.mjs --interval 3600 --state ./db.json  # 每小時循環
 // ============================================================================
 
@@ -28,7 +29,10 @@ const QUERIES = [
   "site:games.shopee.tw sellerlck",
   "site:games.shopee.tw event",
   "games.shopee.tw/sellerlck/event",
+  "shopee 賣場 轉盤 games.shopee.tw",
+  "games.shopee.tw 抽獎",
 ];
+const SOURCE_LABEL = { ddg: "DDG", ddgLite: "DDG-lite", bing: "Bing" };
 
 const DEFAULT = {
   state: "events-db.json",
@@ -37,6 +41,7 @@ const DEFAULT = {
   searchDelay: 1200, // 每組關鍵字間隔(ms)
   fetchDelay: 400,   // 每筆 settings 請求間隔(ms)
   ttl: 600,
+  sources: "ddg,ddgLite,bing",
 };
 
 function arg(name, def) {
@@ -51,10 +56,12 @@ const CFG = {
   maxResults: +arg("max-results", DEFAULT.maxResults),
   searchDelay: +arg("search-delay", DEFAULT.searchDelay),
   fetchDelay: +arg("fetch-delay", DEFAULT.fetchDelay),
+  sources: arg("sources", DEFAULT.sources).split(",").map((s) => s.trim()).filter(Boolean),
   ids: arg("ids", "")
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
+  urls: arg("urls", ""),
   barkKey: arg("bark-key", process.env.BARK_KEY || ""),
   ttl: +arg("ttl", DEFAULT.ttl),
 };
@@ -82,7 +89,7 @@ function saveState(p) {
 }
 
 // ----------------------------------------------------------------------------
-// 來源 1：DuckDuckGo HTML 搜尋（唯一實作；之後可擴充 --sources）
+// 來源 1：DuckDuckGo HTML
 async function ddgSearch(query, max) {
   const url = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query);
   const r = await fetch(url, {
@@ -95,6 +102,31 @@ async function ddgSearch(query, max) {
   for (const m of html.matchAll(/class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"/g)) hrefs.add(m[1]);
   return [...hrefs].slice(0, max);
 }
+
+// 來源 2：DuckDuckGo Lite（直接放外部連結）
+async function ddgLiteSearch(query, max) {
+  const url = "https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent(query);
+  const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "text/html" } });
+  if (!r.ok) throw new Error(`DDG-lite HTTP ${r.status}`);
+  const html = await r.text();
+  const hrefs = [...html.matchAll(/<a[^>]+href="([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((h) => h.startsWith("http"));
+  return [...new Set(hrefs)].slice(0, max);
+}
+
+// 來源 3：Bing RSS（最穩的程式化介面）
+async function bingRss(query, max) {
+  const url = "https://www.bing.com/search?q=" + encodeURIComponent(query) + "&format=rss";
+  const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/rss+xml" } });
+  if (!r.ok) throw new Error(`Bing HTTP ${r.status}`);
+  const xml = await r.text();
+  const links = [...xml.matchAll(/<link>(.*?)<\/link>/g)]
+    .map((m) => m[1].trim())
+    .filter((l) => l && !/bing\.com/.test(l));
+  return [...new Set(links)].slice(0, max);
+}
+const SOURCE_FN = { ddg: ddgSearch, ddgLite: ddgLiteSearch, bing: bingRss };
 
 function extractEventIds(url) {
   const ids = new Set();
@@ -139,17 +171,24 @@ async function sendBark(title, body, group = "shopee-events") {
 // ----------------------------------------------------------------------------
 async function collectOnce() {
   const srcIds = new Set();
-  for (const q of QUERIES) {
-    try {
-      const links = await ddgSearch(q, CFG.maxResults);
-      let got = 0;
-      for (const l of links) for (const id of extractEventIds(l)) { srcIds.add(id); got++; }
-      log(`🔎 搜尋「${q}」→ ${links.length} 結果 / ${got} 個 event id`);
-    } catch (e) { log(`⚠ 搜尋失敗「${q}」: ${e.message.slice(0, 80)}`); }
-    await sleep(CFG.searchDelay);
+  const via = new Map();
+  for (const src of CFG.sources) {
+    const fn = SOURCE_FN[src];
+    if (!fn) { log(`⚠ 未知來源 ${src}，跳過`); continue; }
+    for (const q of QUERIES) {
+      try {
+        const links = await fn(q, CFG.maxResults);
+        let got = 0;
+        for (const l of links) for (const id of extractEventIds(l)) {
+          if (!srcIds.has(id)) { srcIds.add(id); via.set(id, src); got++; }
+        }
+        log(`🔎 ${SOURCE_LABEL[src] || src}「${q}」→ ${links.length} 結果 / +${got} 新 id`);
+      } catch (e) { log(`⚠ ${src}「${q}」失敗: ${e.message.slice(0, 70)}`); }
+      await sleep(CFG.searchDelay);
+    }
   }
 
-  const ids = new Set([...Object.keys(state.ids), ...srcIds, ...CFG.ids]);
+  const ids = new Set([...Object.keys(state.ids), ...srcIds, ...CFG.ids, ...extractEventIds(CFG.urls)]);
   log(`📥 已知 ${Object.keys(state.ids).length} + 來源新增 ${srcIds.size} → 共檢查 ${ids.size} 個`);
 
   const active = [];
@@ -169,7 +208,7 @@ async function collectOnce() {
     rec.name = ev.name || rec.name;
     rec.begin = ev.begin;
     rec.end = ev.end;
-    rec.foundVia = rec.foundVia || (srcIds.has(id) ? "search" : "known");
+    rec.foundVia = rec.foundVia || via.get(id) || "known";
     if (!rec.alerted) rec.alerted = [];
     state.ids[id] = rec;
 
