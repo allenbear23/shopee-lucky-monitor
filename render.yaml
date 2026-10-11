@@ -1,0 +1,16 @@
+# Render Blueprint — 用 Background Worker 跑常駐監視器
+# 用法：把整個資料夾推到 GitHub → Render Dashboard → New → Blueprint → 選 repo
+services:
+  - type: worker
+    name: shopee-lucky-monitor
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter # 0.5c-512mb，按秒計費（跑 2 小時約 $0.03）；跑完記得停用
+    envVars:
+      - key: BARK_KEY
+        sync: false # 部署後在 dashboard 手動填入，不會進 git
+      - key: MONITOR_FLAGS
+        value: --interval 60
+      - key: BARK_TTL
+        value: "600"
+    healthCheckPath: ""

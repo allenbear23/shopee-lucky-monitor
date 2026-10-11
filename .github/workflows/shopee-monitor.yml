@@ -1,0 +1,28 @@
+name: Shopee Lucky Monitor
+
+on:
+  workflow_dispatch:
+  # 之後要全自動可以加：
+  # schedule:
+  #   - cron: "0 8 * * *"   # 每天 08:00 臺北（UTC+8）檢查，未開始/已結束會自動退出
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 單次 run 最長 6h（活動結束程式會自己退出，不會跑滿）
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run Shopee Lucky Draw Monitor
+        env:
+          TZ: "Asia/Taipei"
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          MONITOR_FLAGS: ${{ vars.MONITOR_FLAGS }}
+        run: |
+          node monitor.mjs $MONITOR_FLAGS
