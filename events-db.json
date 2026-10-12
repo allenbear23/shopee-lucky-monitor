@@ -2,7 +2,7 @@
   "ids": {
     "f82a22380b8ee427": {
       "firstSeen": 1791730736.128,
-      "lastSeen": 1791785233.855,
+      "lastSeen": 1791819495.478,
       "valid": true,
       "name": "幸運轉轉樂",
       "begin": 1595210400,
@@ -12,7 +12,7 @@
     },
     "91744938b0f7d583": {
       "firstSeen": 1791730736.713,
-      "lastSeen": 1791785234.441,
+      "lastSeen": 1791819496.114,
       "valid": true,
       "name": "🎇雙十慶轉好運🎆",
       "begin": 1791561600,
@@ -22,7 +22,7 @@
     },
     "de5fdba28a6d3c79": {
       "firstSeen": 1791750133.189,
-      "lastSeen": 1791785235.026,
+      "lastSeen": 1791819496.76,
       "valid": true,
       "name": "小廚師的命運輪盤",
       "begin": 1688961600,
@@ -32,7 +32,7 @@
     },
     "8a0b38b99d1a39f9": {
       "firstSeen": 1791750133.825,
-      "lastSeen": 1791785235.611,
+      "lastSeen": 1791819497.396,
       "valid": true,
       "name": "9/7-9/8 小菲戰隊大優惠",
       "begin": 1694016000,
@@ -42,7 +42,7 @@
     },
     "6f4389e4b37bb8cc": {
       "firstSeen": 1791750134.465,
-      "lastSeen": 1791785236.202,
+      "lastSeen": 1791819498.03,
       "valid": true,
       "name": "💰每日獎品💰",
       "begin": 1709247600,
@@ -52,7 +52,7 @@
     },
     "1851933cb3be1af7": {
       "firstSeen": 1791750135.088,
-      "lastSeen": 1791785236.788,
+      "lastSeen": 1791819498.665,
       "valid": true,
       "name": "抽中神券換新季 立即下單數量有限 分享3次中獎翻倍",
       "begin": 1791648000,
@@ -62,7 +62,7 @@
     },
     "4c27d0a0863fc06b": {
       "firstSeen": 1791762344.144,
-      "lastSeen": 1791785237.382,
+      "lastSeen": 1791819499.3,
       "valid": true,
       "name": "618 好勢幸運轉盤",
       "begin": 1685595600,
@@ -72,7 +72,7 @@
     },
     "ac228d07852f016d": {
       "firstSeen": 1791762344.789,
-      "lastSeen": 1791785237.981,
+      "lastSeen": 1791819499.935,
       "valid": true,
       "name": "9/19-9/20小菲戰隊大優惠",
       "begin": 1695052800,
@@ -82,7 +82,7 @@
     },
     "1f26385063ae7b0c": {
       "firstSeen": 1791785238.581,
-      "lastSeen": 1791785238.581,
+      "lastSeen": 1791819500.57,
       "valid": true,
       "name": "🎊歡慶524 31！最高抽85折、5折神券🎊",
       "begin": 1684771200,
@@ -92,7 +92,7 @@
     },
     "ba0753f3364faebe": {
       "firstSeen": 1791785239.202,
-      "lastSeen": 1791785239.202,
+      "lastSeen": 1791819501.211,
       "valid": true,
       "name": "幸運轉盤",
       "begin": 1679940000,
@@ -102,11 +102,43 @@
     },
     "8a0ab40f8c7ad0c4": {
       "firstSeen": 1791785239.787,
-      "lastSeen": 1791785239.787,
+      "lastSeen": 1791819501.846,
       "valid": true,
       "name": "愛D菇-輪盤轉轉樂",
       "begin": 1775025000,
       "end": 1777564740,
+      "foundVia": "ddgLite",
+      "alerted": []
+    },
+    "5a2f84ff68391101": {
+      "firstSeen": 1791819502.487,
+      "lastSeen": 1791819502.487,
+      "valid": true,
+      "name": "2024.01.07-超級品牌日",
+      "begin": 1704542400,
+      "end": 1704988740,
+      "foundVia": "ddg",
+      "alerted": []
+    },
+    "2a6a08819f7eeadc": {
+      "firstSeen": 1791819503.147,
+      "lastSeen": 1791819503.147,
+      "valid": true,
+      "name": "愛D菇-輪盤轉轉樂",
+      "begin": 1790908200,
+      "end": 1793462340,
+      "foundVia": "ddgLite",
+      "alerted": [
+        1790908200
+      ]
+    },
+    "7dd3ac93dc278b09": {
+      "firstSeen": 1791819504.789,
+      "lastSeen": 1791819504.789,
+      "valid": true,
+      "name": "1103",
+      "begin": 1698734100,
+      "end": 1699027200,
       "foundVia": "ddgLite",
       "alerted": []
     }
