@@ -223,6 +223,16 @@ async function fingerprintEvent(id) {
   return { templateCdn, name: (d.basic?.game_name || "").slice(0, 20) };
 }
 
+// 本店跨期穩定指紋（10/10、10/11 的 Asset.Template 雜湊一致）：搜尋/FB 發現的場次若是
+// 他店（同一 sellerlck 平台但不同賣家）一律不自動接。OUR_FP 可在啟動時由目前 event 算出，
+// 算不出時退回本常數。
+const OUR_TEMPLATE_CDN = "03b8f1640e10aaf22ffbddfb6949467e_1717056092";
+function sameFingerprint(fp) {
+  if (!fp || !fp.templateCdn) return false;
+  const base = (OUR_FP && OUR_FP.templateCdn) || OUR_TEMPLATE_CDN;
+  return fp.templateCdn === base;
+}
+
 async function searchEventIds() {
   // DDG-lite 為主（直接給外部連結），Bing RSS 為輔
   const ids = new Set();
@@ -261,7 +271,7 @@ async function discoverNewActiveEvent() {
       if (begin > now() || begin <= 0) continue; // 未開或無效
       const fp = await fingerprintEvent(id);
       const ev = { id, end: st.end, left: st.left, name: fp.name };
-      if (OUR_FP && OUR_FP.templateCdn && fp.templateCdn === OUR_FP.templateCdn) {
+      if (sameFingerprint(fp)) {
         return { match: ev, others }; // 同模板 → 很可能是同一家
       }
       others.push(ev);
@@ -351,21 +361,42 @@ async function discoverFromFb() {
   for (const u of newPosts) {
     try {
       const d = await fbPostMeta(u);
-      if (!/轉盤|幸運|蝦幣/.test(d)) continue;
-      // 直連遊戲連結
+      const hasKeyword = /轉盤|幸運|蝦幣/.test(d);
+      // 直連遊戲連結：不靠關鍵字（有人可能只貼連結），靠「進行中＋本店指紋」過濾他店
       for (const m of d.matchAll(/sellerlck\/event\/([0-9a-f]{8,})/gi)) {
         const id = m[1].toLowerCase();
-        const st = await getEventStatus(id);
-        if (!st.ended) return { match: { id, end: st.end, left: st.left, name: (st.data?.basic?.game_name || "").slice(0, 16), from: "FB貼文" }, announced, desc: announcedDesc };
+        if (id === EVENT) continue;
+        try {
+          const st = await getEventStatus(id);
+          if (!st.ended && (st.data?.basic?.begin_time || 0) <= now()) {
+            const fp = await fingerprintEvent(id);
+            if (sameFingerprint(fp)) {
+              return {
+                match: { id, end: st.end, left: st.left, name: fp.name || (st.data?.basic?.game_name || "").slice(0, 16), from: "FB貼文" },
+                announced, desc: announcedDesc,
+              };
+            }
+          }
+        } catch {}
       }
       // 短網址（可能指到遊戲頁或賣場頁）
       for (const m of d.matchAll(/s\.shopee\.tw\/([A-Za-z0-9]{8,})/g)) {
         const info = await resolveShortLink(m[1]);
         if (!info) continue;
-        if (info.event) {
-          const st = await getEventStatus(info.event);
-          if (!st.ended) return { match: { id: info.event, end: st.end, left: st.left, name: (st.data?.basic?.game_name || "").slice(0, 16), from: "FB短網址" }, announced, desc: announcedDesc };
-        } else if (info.isStore && !announced && fbAnnouncedDay !== today) {
+        if (info.event && info.event !== EVENT) {
+          try {
+            const st = await getEventStatus(info.event);
+            if (!st.ended && (st.data?.basic?.begin_time || 0) <= now()) {
+              const fp = await fingerprintEvent(info.event);
+              if (sameFingerprint(fp)) {
+                return {
+                  match: { id: info.event, end: st.end, left: st.left, name: fp.name || (st.data?.basic?.game_name || "").slice(0, 16), from: "FB短網址" },
+                  announced, desc: announcedDesc,
+                };
+              }
+            }
+          } catch {}
+        } else if (info.isStore && hasKeyword && !announced && fbAnnouncedDay !== today) {
           fbAnnouncedDay = today;
           try { writeFileSync(FB_STATE_FILE, JSON.stringify({ day: today })); } catch {}
           announced = true;
