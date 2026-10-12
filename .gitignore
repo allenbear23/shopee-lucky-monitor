@@ -7,3 +7,6 @@ feed-data.jsonl
 dash.out
 dash.err
 monitor.err
+fb-state.json
+target.json
+manual-target.txt

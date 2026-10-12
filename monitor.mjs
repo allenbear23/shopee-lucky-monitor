@@ -283,7 +283,9 @@ const FB_QUERIES = [
 ];
 let fbSeen = new Set();      // 已處理過的貼文 URL
 let lastFbSearch = 0;        // 最近一次搜尋貼文清單的時間
-let fbAnnouncedDay = "";     // 已通知「公告開跑但缺連結」的日期（避免重複轟炸）
+const FB_STATE_FILE = "fb-state.json";
+let fbAnnouncedDay = "";     // 已通知「公告開跑但缺連結」的台灣日期（持久化：跨重啟不重複轟炸）
+try { fbAnnouncedDay = JSON.parse(readFileSync(FB_STATE_FILE, "utf8")).day || ""; } catch {}
 
 function fbDecode(s) {
   return String(s || "")
@@ -343,7 +345,7 @@ async function discoverFromFb() {
     newPosts.forEach((u) => fbSeen.add(u));
   }
   if (!newPosts.length) return { match: null, announced: false };
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10); // Asia/Taipei 日期（用 UTC 會跨日重複通知）
   let announced = false;
   let announcedDesc = "";
   for (const u of newPosts) {
@@ -365,6 +367,7 @@ async function discoverFromFb() {
           if (!st.ended) return { match: { id: info.event, end: st.end, left: st.left, name: (st.data?.basic?.game_name || "").slice(0, 16), from: "FB短網址" }, announced, desc: announcedDesc };
         } else if (info.isStore && !announced && fbAnnouncedDay !== today) {
           fbAnnouncedDay = today;
+          try { writeFileSync(FB_STATE_FILE, JSON.stringify({ day: today })); } catch {}
           announced = true;
           announcedDesc = d;
         }
