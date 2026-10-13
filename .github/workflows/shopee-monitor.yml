@@ -2,10 +2,8 @@ name: Shopee Lucky Monitor
 
 on:
   workflow_dispatch:
-  schedule:
-    # 每 4 小時一檔（臺北 00:07/04:07/08:07/12:07/16:07/20:07）。
-    # 每檔最多跑 6h + --keep-alive：跨過 23:59 換日，自動接上隔天場次，形成 24/7 覆蓋。
-    - cron: "7 0,4,8,12,16,20 * * *"
+  # 已停止雲端監視（2026-10-13）：原 schedule `7 0,4,8,12,16,20 * * *` 已移除。
+  # 需要恢復時加上 schedule 或手動 Run workflow。
 
 jobs:
   monitor:

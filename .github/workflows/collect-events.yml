@@ -2,9 +2,8 @@ name: Shopee Event Collector
 
 on:
   workflow_dispatch:
-  schedule:
-    # 每 2 小時一輪（UTC 偶數時 → 臺北 08:23/10:23/…/06:23）
-    - cron: "23 */2 * * *"
+  # 已停止雲端監視（2026-10-13）：原 schedule `23 */2 * * *` 已移除。
+  # 需要恢復時加上 schedule 或手動 Run workflow。
 
 permissions:
   contents: write # 需要把 events-db.json（去重狀態）寫回 repo
