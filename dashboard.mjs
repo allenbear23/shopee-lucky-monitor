@@ -103,6 +103,7 @@ canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
 <div class="cards">
   <div class="card"><div class="k">模式</div><div class="v" id="c-mode">-</div></div>
   <div class="card"><div class="k">近180s 中獎</div><div class="v" id="c-total">-</div></div>
+  <div class="card"><div class="k">近180s 獨立用戶</div><div class="v" id="c-uniq">-</div></div>
   <div class="card"><div class="k">非1幣</div><div class="v" id="c-non">-</div></div>
   <div class="card"><div class="k">非1幣佔比</div><div class="v" id="c-frac">-</div></div>
   <div class="card"><div class="k">feed lag</div><div class="v" id="c-lag">-</div></div>
@@ -134,7 +135,11 @@ function refresh(cfg){
     ch.data.labels=xs;
     ch.data.datasets[0].data=series.map(r=>r.total);
     ch.data.datasets[1].data=series.map(r=>r.non);
-    ch.data.datasets[2].data=series.map(()=>12); // 爆量門檻
+    ch.data.datasets[2].data=series.map(r=>r.uniq??0);
+    ch.data.datasets[3].data=series.map(()=>12); // 爆量門檻
+    // 縱軸依目前峰值留 30% 空間；suggestedMax 非硬上限，資料超過會自動再放大
+    const maxV=Math.max(12,...series.map(r=>Math.max(r.total||0,r.non||0,r.uniq||0)));
+    ch.options.scales.y.suggestedMax=Math.ceil(maxV*1.3/50)*50;
   } else if(mild){
     ch.data.labels=xs;
     const sets=ch.data.datasets;
@@ -152,9 +157,9 @@ function refresh(cfg){
 function build(){
   if(Object.keys(charts).length)return;
   const base=(label,color,fill=false)=>({label,borderColor:color,backgroundColor:color+(fill?"22":"00"),borderWidth:1.5,pointRadius:0,tension:.25,fill});
-  const opt={responsive:true,maintainAspectRatio:false,animation:false,scales:{x:{ticks:{maxTicksLimit:8,color:"#8b98a5",maxRotation:0},grid:{color:"#22303d"}},y:{ticks:{color:"#8b98a5"},grid:{color:"#22303d"}}},plugins:{legend:{labels:{color:"#e6edf3",boxWidth:12,font:{size:11}}}}};
+  const opt={responsive:true,maintainAspectRatio:false,animation:false,scales:{x:{ticks:{maxTicksLimit:8,color:"#8b98a5",maxRotation:0},grid:{color:"#22303d"}},y:{beginAtZero:true,ticks:{color:"#8b98a5"},grid:{color:"#22303d"}}},plugins:{legend:{labels:{color:"#e6edf3",boxWidth:12,font:{size:11}}}}};
   mk("ch-total",{type:"line",data:{labels:[],datasets:[
-    base("總中獎", "#4da3ff"),base("非1幣", "#ff5d5d"),
+    base("總中獎", "#4da3ff"),base("非1幣", "#ff5d5d"),base("獨立用戶", "#3ddc97"),
     {type:"line",label:"門檻12",data:[],borderColor:"#ffb020",borderDash:[4,4],pointRadius:0,borderWidth:1}
   ]},options:opt});
   mk("ch-frac",{type:"line",data:{labels:[],datasets:[
@@ -188,6 +193,7 @@ async function load(){
     } else { $("banner").style.display="none"; }
     $("c-mode").textContent=l.mode==="idle"?"😴待機":(l.mode==="active"?"🟢監視中":"?");
     $("c-total").textContent=(l.total??"-")
+    $("c-uniq").textContent=(l.uniq??"-")
     $("c-non").textContent=(l.non??"-")
     $("c-frac").textContent=(l.frac??"-")+"%"
     $("c-lag").textContent=(l.lag??"-")+"s"

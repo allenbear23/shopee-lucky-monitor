@@ -36,6 +36,8 @@ import { appendFileSync, readFileSync, writeFileSync, statSync } from "node:fs";
 // 目前監視目標（可跨期動態更換：--event / --url 指定，或待機時由搜尋發現自動切換）
 let EVENT = "1851933cb3be1af7";
 let DRAWMOD = 391057; // Service.LUCKY_DRAW module_id（每個 event 不同，切換時會重新解析）
+let MODULE_ONLY = false; // true = 只知 module、不知 event id（靠 module 掃描自動接期）
+let moduleCursor = 0;    // module 掃描游標（從上次已知 module 往上找）
 const TARGET_FILE = "target.json"; // 記住目前監視目標，重啟不遺失
 const APPID = "9bv5119Po61HKw0Tdn"; // 從前端 bundle 解出的 appid
 const DATA_FILE = "feed-data.jsonl"; // 每輪統計 → 供 dashboard 讀取畫圖
@@ -86,12 +88,13 @@ const CFG = {
 function loadTarget() {
   try {
     const j = JSON.parse(readFileSync(TARGET_FILE, "utf8"));
-    if (j.event) EVENT = String(j.event).toLowerCase();
+    if (j.event) { EVENT = String(j.event).toLowerCase(); MODULE_ONLY = false; }
+    else if (j.drawmod) { MODULE_ONLY = true; }
     if (j.drawmod) DRAWMOD = +j.drawmod;
   } catch {}
 }
 function saveTarget() {
-  try { writeFileSync(TARGET_FILE, JSON.stringify({ event: EVENT, drawmod: DRAWMOD, savedAt: Math.floor(now()) }, null, 2)); } catch {}
+  try { writeFileSync(TARGET_FILE, JSON.stringify({ event: MODULE_ONLY ? "" : EVENT, drawmod: DRAWMOD, savedAt: Math.floor(now()) }, null, 2)); } catch {}
 }
 loadTarget();
 const cliEventId =
@@ -199,6 +202,8 @@ async function switchEvent(id, reason) {
   if (!mod) throw new Error("該 event 的 settings 找不到 Service.LUCKY_DRAW module");
   EVENT = id;
   DRAWMOD = mod;
+  MODULE_ONLY = false;
+  moduleCursor = 0;
   saveTarget();
   announcedEnd = false;
   feedMode = false;
@@ -206,6 +211,20 @@ async function switchEvent(id, reason) {
   sawActive = false;
   lastAlert = 0;
   log(`🎯 切換監視目標 → event ${EVENT} / module ${DRAWMOD}（${reason}）`);
+}
+
+// 只拿到 module（沒有 event id）時切換：直接以 feed 模式監視
+async function switchModule(mod, reason) {
+  DRAWMOD = +mod;
+  MODULE_ONLY = true;
+  moduleCursor = 0;
+  saveTarget();
+  announcedEnd = false;
+  feedMode = true;
+  staleCycles = 0;
+  sawActive = true;
+  lastAlert = 0;
+  log(`🎯 切換監視目標 → module ${DRAWMOD}（${reason}；event id 未知，走 feed 模式）`);
 }
 
 let OUR_FP = null; // 本活動的品牌指紋（Asset.Template 雜湊＋活動名），用來過濾搜尋發現的場次是不是「這一家」
@@ -279,6 +298,38 @@ async function discoverNewActiveEvent() {
     await sleep(400);
   }
   return { match: null, others };
+}
+
+// ----------------------------------------------------------------------------
+// module 掃描：event id 只存在於 app 分享連結，公開網路拿不到；但 Service.LUCKY_DRAW
+// 的 module_id 是連續配發，且 feed endpoint 不需要 event id。從上次已知 module 往上
+// 掃，用「feed 新鮮 + 本店獎項特徵（1 活動蝦幣）」找出新場次，直接以 feed 模式接上。
+// ----------------------------------------------------------------------------
+async function discoverActiveModule() {
+  const base = +DRAWMOD || 0;
+  if (!base) return null;
+  if (moduleCursor < base + 1) moduleCursor = base + 1;
+  const end = base + 200;
+  const stop = Math.min(moduleCursor + 39, end); // 每輪掃 40 個，分散請求
+  for (let id = moduleCursor; id <= stop; id++) {
+    moduleCursor = id + 1;
+    try {
+      const r = await fetch(`https://games.shopee.tw/gameplatform/api/v2/goluckydraw/prize/list/module/${id}?appid=${APPID}&offset=0&limit=10`, {
+        headers: { "User-Agent": UA, Referer: "https://games.shopee.tw/sellerlck/" },
+      });
+      if (!r.ok) { if (r.status === 403 || r.status === 429) { moduleCursor = 0; break; } continue; }
+      const j = await r.json().catch(() => null);
+      const rows = (j && j.data) || [];
+      if (!rows.length) continue;
+      const latest = Math.max(...rows.map((x) => x.lucky_time || 0));
+      if (now() - latest > ACTIVE_LAG) continue;
+      if (!rows.some((x) => x.package_name === "1 活動蝦幣")) continue;
+      return id;
+    } catch {}
+    await sleep(250);
+  }
+  if (moduleCursor > end) moduleCursor = 0; // 掃完一輪，下輪從頭
+  return null;
 }
 
 // ----------------------------------------------------------------------------
@@ -422,6 +473,14 @@ async function handleManualTarget(reason) {
   try {
     const txt = manualTargetText();
     if (!txt) return false;
+    // 純數字 = 直接指定 module id（沒有 event id 也能監視）
+    if (/^\d{5,9}$/.test(txt)) {
+      clearManualTarget();
+      await switchModule(+txt, "手動餵入 module（" + reason + "）");
+      log(`🆕 手動接管 module ${DRAWMOD}（event id 未知，feed 模式）`);
+      await sendBark("🆕 已接管手動指定的 module", "已接上 module " + DRAWMOD + "（event id 未知，feed 模式）。");
+      return true;
+    }
     let id = (txt.match(/[0-9a-f]{16,}/i) || [])[0]?.toLowerCase(); // 直接 event id
     if (!id) id = extractEventId(txt);
     if (!id) {
@@ -441,6 +500,7 @@ async function oneCycle() {
   try {
     // 手動餵入的目標優先接管（貼進 manual-target.txt，任一輪就會接上）
     try { if (await handleManualTarget("輪詢中")) return "ok"; } catch {}
+    if (MODULE_ONLY) feedMode = true; // 只有 module：以 feed 新鮮度判斷場次
     const { rows, lag } = await fetchRecent();
     const feedFresh = rows.length > 0 && lag <= ACTIVE_LAG; // feed 是否「正在滾動」
 
@@ -482,6 +542,7 @@ async function oneCycle() {
     const stale = lag > CFG.freshLag ? ` ⚠STALE(lag=${Math.round(lag)}s)` : "";
     const inWin = rows.filter((r) => r.lucky_time > now() - CFG.window);
     const total = inWin.length;
+    const uniqUsers = new Set(inWin.map((r) => r.user_id).filter(Boolean)).size;
     const non = inWin.filter(isNonCoin);
     const nCoin1 = inWin.filter((r) => r.package_name === "1 活動蝦幣").length;
     const n30 = inWin.filter((r) => r.package_name.includes("30")).length;
@@ -491,7 +552,7 @@ async function oneCycle() {
     const frac = total ? (non.length / total) * 100 : 0;
     const leftMin = left == null ? null : Math.round(left / 60);
 
-    log(`feed lag=${Math.round(lag)}s${stale} | 近${CFG.window}s: ${total}中獎, 非1幣=${non.length}(${frac.toFixed(1)}%) [1幣${nCoin1}/30券${n30}/50券${n50}/100券${n100}/10幣${nCoin10}] | ${feedMode ? "feed模式" : "距結束≈" + leftMin + "分"}`);
+    log(`feed lag=${Math.round(lag)}s${stale} | 近${CFG.window}s: ${total}中獎（獨立用戶 ${uniqUsers}）, 非1幣=${non.length}(${frac.toFixed(1)}%) [1幣${nCoin1}/30券${n30}/50券${n50}/100券${n100}/10幣${nCoin10}] | ${feedMode ? "feed模式" : "距結束≈" + leftMin + "分"}`);
 
     // burst 判斷
     const enough = total >= CFG.minWinners;
@@ -519,7 +580,7 @@ async function oneCycle() {
     pushData({
       t: now(), mode: "active",
       lag: Math.round(lag), stale: stale ? 1 : 0,
-      win: CFG.window, total, non: non.length, frac: +frac.toFixed(1),
+      win: CFG.window, total, non: non.length, frac: +frac.toFixed(1), uniq: uniqUsers,
       n1: nCoin1, n30, n50, n100, n10: nCoin10,
       leftMin, alert: alerted,
     });
@@ -551,8 +612,8 @@ async function idleScan() {
   while (true) {
     await sleep(300_000); // 每 5 分鐘掃一次
     try {
-      // 1) 同一 event 是否滾到新的一天
-      try {
+      // 1) 同一 event 是否滾到新的一天（module-only 模式沒有 event id，跳過）
+      if (!MODULE_ONLY) try {
         const st = await getEventStatus();
         if (!st.ended) {
           announcedEnd = false;
@@ -577,6 +638,18 @@ async function idleScan() {
       pushData({ t: now(), mode: "idle" });
       // 3) 手動餵入的目標優先接管
       try { if (await handleManualTarget("待機掃描")) return; } catch {}
+      // 3.5) module 掃描：不需要 event id，直接找今天正在滾的 module
+      if (!CFG.noDiscover) {
+        try {
+          const mod = await discoverActiveModule();
+          if (mod) {
+            await switchModule(mod, "module 掃描發現新場次");
+            log(`🆕 module 掃描發現新場次 module ${mod}（event id 未知，feed 模式）`);
+            await sendBark("🆕 幸運蝦轉盤新場次開跑", `module 掃描發現新場次（module ${mod}，event id 未知）。監視器已自動接上。`);
+            return;
+          }
+        } catch (e) { log(`⚠ module 掃描失敗: ${e.message.slice(0, 80)}`); }
+      }
       // 4) FB 社團情報（每天開跑的公告管道；每個掃描都跑，貼文清單 15 分鐘才重搜）
       if (!CFG.noDiscover) {
         try {
@@ -646,16 +719,22 @@ async function main() {
   try { if (await handleManualTarget("啟動時")) log(`🎯 啟動時由 manual-target.txt 接管目標`); } catch {}
   // 確保監視目標的 module 正確（target.json / --event / --url 可能換過 event）
   try {
-    const mod = await resolveDrawModule(EVENT);
-    if (!mod) throw new Error("無 Service.LUCKY_DRAW");
-    if (mod !== DRAWMOD) { DRAWMOD = mod; saveTarget(); }
-    log(`🎯 監視目標 event ${EVENT} / draw module ${DRAWMOD}` + (TARGET_OVERRIDDEN ? "（--event/--url 指定）" : ""));
+    if (MODULE_ONLY) {
+      log(`🎯 監視目標 module ${DRAWMOD}（event id 未知，feed 模式）`);
+    } else {
+      const mod = await resolveDrawModule(EVENT);
+      if (!mod) throw new Error("無 Service.LUCKY_DRAW");
+      if (mod !== DRAWMOD) { DRAWMOD = mod; saveTarget(); }
+      log(`🎯 監視目標 event ${EVENT} / draw module ${DRAWMOD}` + (TARGET_OVERRIDDEN ? "（--event/--url 指定）" : ""));
+    }
   } catch (e) {
     log(`⚠ 目前目標 event ${EVENT} settings 讀取失敗：${e.message.slice(0, 60)}。暫時沿用 module ${DRAWMOD}。`);
   }
-  const st = await getEventStatus().catch(() => null);
-  const active = st !== null && !st.ended;
-  log(`🎯 開始監視。活動剩餘: ${active ? Math.round(st.left / 60) + " 分" : "待機/未知"}（結束 ${active ? st.end : "-"}）`);
+  const st = MODULE_ONLY ? null : await getEventStatus().catch(() => null);
+  const active = MODULE_ONLY || (st !== null && !st.ended);
+  log(`🎯 開始監視。${MODULE_ONLY
+    ? `module ${DRAWMOD}（feed 模式，event id 未知）`
+    : active ? `活動剩餘: ${Math.round(st.left / 60)} 分（結束 ${st.end}）` : "待機/未知"}`);
   log(`設定 window=${CFG.window}s burst=${CFG.burst} frac=${CFG.frac} minWinners=${CFG.minWinners} cooldown=${CFG.cooldown}s interval=${CFG.interval}s` + (CFG.keepAlive ? " keepAlive=on(24h)" : ""));
   if (active) {
     await sendBark("📡 監視器上線", `開始監視幸運蝦轉盤，每 ${CFG.interval} 秒一輪。非1幣大量出現時會通知。`);
