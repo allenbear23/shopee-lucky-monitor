@@ -2,13 +2,22 @@ name: Shopee Lucky Monitor
 
 on:
   workflow_dispatch:
-  # 已停止雲端監視（2026-10-13）：原 schedule `7 0,4,8,12,16,20 * * *` 已移除。
-  # 需要恢復時加上 schedule 或手動 Run workflow。
+  schedule:
+    # 每 6 小時一檔（臺北 00:07/06:07/12:07/18:07）；單檔最多 6h → 24/7 無重疊覆蓋
+    - cron: "7 0,6,12,18 * * *"
+
+# 避免兩檔雲端監視重疊（重疊會重複推播）
+concurrency:
+  group: shopee-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: write # 回寫 cloud-target.json（記住目前監視的 module）
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # 單次 run 最長 6h（活動結束 --keep-alive 會待機不退出，靠下一檔接續）
+    timeout-minutes: 360 # 單次 run 最長 6h（--keep-alive 待機不退出，靠下一檔接續）
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,10 +27,32 @@ jobs:
         with:
           node-version: 20
 
+      - name: Restore last target
+        run: |
+          if [ -f cloud-target.json ]; then
+            cp cloud-target.json target.json
+            echo "restored: $(cat target.json)"
+          fi
+
       - name: Run Shopee Lucky Draw Monitor (24/7 keep-alive)
         env:
           TZ: "Asia/Taipei"
           BARK_KEY: ${{ secrets.BARK_KEY }}
           MONITOR_FLAGS: ${{ vars.MONITOR_FLAGS }}
         run: |
-          node monitor.mjs $MONITOR_FLAGS # 預設 --interval 60 --keep-alive（設在 repo variable）
+          node monitor.mjs ${MONITOR_FLAGS:---interval 60 --keep-alive}
+
+      - name: Persist target (always)
+        if: always()
+        run: |
+          if [ -f target.json ]; then
+            cp target.json cloud-target.json
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -f cloud-target.json
+            if ! git diff --cached --quiet; then
+              git commit -q -m "cloud: target update $(date -u +%FT%TZ)"
+              git pull --rebase origin main || true
+              git push origin main || true
+            fi
+          fi
