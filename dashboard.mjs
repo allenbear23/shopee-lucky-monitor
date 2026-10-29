@@ -113,8 +113,8 @@ canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
   <button data-m="15">15分</button><button data-m="60" class="on">1小時</button>
   <button data-m="360">6小時</button><button data-m="1440">24小時</button><button data-m="100000">全部</button>
 </div>
-<div class="chart"><h2>中獎量（近180s 窗口）vs 爆量門檻(12)</h2><canvas id="ch-total"></canvas></div>
-<div class="chart"><h2>非1幣佔比 %（觸發線 10%）</h2><canvas id="ch-frac"></canvas></div>
+<div class="chart"><h2>中獎量（近180s 窗口）與獨立用戶</h2><canvas id="ch-total"></canvas></div>
+<div class="chart"><h2>非1幣佔比 %（通知門檻 90%）</h2><canvas id="ch-frac"></canvas></div>
 <div class="chart"><h2>非1幣組成（30券/50券/100券/10幣）</h2><canvas id="ch-compo"></canvas></div>
 <div class="chart"><h2>feed 落後秒數（stale=紅點）</h2><canvas id="ch-lag"></canvas></div>
 <div class="alerts"><b>最近推播 / 事件</b><ul id="alerts"></ul></div>
@@ -146,7 +146,7 @@ function refresh(cfg){
     sets.forEach((s,i)=>{const k=["n30","n50","n100","n10"][i];s.data=series.map(r=>r[k]||0)});
   } else if(cfg.type==="frac"){
     ch.data.labels=xs; ch.data.datasets[0].data=series.map(r=>r.frac);
-    ch.data.datasets[1].data=series.map(()=>10); // 觸發線
+    ch.data.datasets[1].data=series.map(()=>90); // 通知門檻
   } else if(cfg.type==="lag"){
     ch.data.labels=xs; ch.data.datasets[0].data=series.map(r=>r.lag);
     const stale=series.filter(r=>r.stale).map(r=>({x:tfmt(r.t),y:r.lag}));
@@ -160,7 +160,7 @@ function build(){
   const opt={responsive:true,maintainAspectRatio:false,animation:false,scales:{x:{ticks:{maxTicksLimit:8,color:"#8b98a5",maxRotation:0},grid:{color:"#22303d"}},y:{beginAtZero:true,ticks:{color:"#8b98a5"},grid:{color:"#22303d"}}},plugins:{legend:{labels:{color:"#e6edf3",boxWidth:12,font:{size:11}}}}};
   mk("ch-total",{type:"line",data:{labels:[],datasets:[
     base("總中獎", "#4da3ff"),base("非1幣", "#ff5d5d"),base("獨立用戶", "#3ddc97"),
-    {type:"line",label:"門檻12",data:[],borderColor:"#ffb020",borderDash:[4,4],pointRadius:0,borderWidth:1}
+    {type:"line",label:"參考12",data:[],borderColor:"#ffb020",borderDash:[4,4],pointRadius:0,borderWidth:1}
   ]},options:opt});
   mk("ch-frac",{type:"line",data:{labels:[],datasets:[
     base("非1幣佔比%", "#ff9d5c"),

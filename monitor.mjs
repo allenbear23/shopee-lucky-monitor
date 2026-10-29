@@ -51,7 +51,7 @@ const DEFAULT = {
   interval: 30, // 輪詢間隔(秒)
   window: 180, // burst 統計時間窗(秒)
   burst: 12, // 窗內「非1幣」中獎 ≥ 此值 → 觸發
-  frac: 0.1, // 窗內「非1幣」佔比 ≥ 此值 → 觸發
+  frac: 0.9, // 窗內「非1幣」佔比 ≥ 此值 → 觸發（目前只以此為準）
   minWinners: 20, // 窗內總中獎必須 ≥ 此值才判斷（防空窗/舊副本）
   cooldown: 600, // 同一波 burst 不重複通知(秒)
   freshLag: 240, // feed 最新一筆落後超過此秒數 → 標 stale（僅記錄）
@@ -556,10 +556,10 @@ async function oneCycle() {
 
     // burst 判斷
     const enough = total >= CFG.minWinners;
-    const hitBurst = enough && non.length >= CFG.burst;
-    const hitFrac = enough && frac >= CFG.frac * 100;
+    // 只有「非1幣佔比 ≥ 門檻（預設 90%）」才通知；不再用筆數門檻
+    const hit = enough && frac >= CFG.frac * 100;
     let alerted = 0;
-    if ((hitBurst || hitFrac) && now() - lastAlert >= CFG.cooldown) {
+    if (hit && now() - lastAlert >= CFG.cooldown) {
       lastAlert = now();
       const pct = (n) => (total ? ((n / total) * 100).toFixed(1) : "0.0");
       // 機率基準：用這次抓回的全部中獎列（近數分鐘、不重複）當「平時」基準
@@ -711,7 +711,7 @@ async function main() {
   }
   if (CFG.once) {
     log("🧪 --once 乾跑一輪（不推播、不循環）…");
-    log("設定 window=" + CFG.window + "s burst=" + CFG.burst + " frac=" + CFG.frac + " minWinners=" + CFG.minWinners + " rows=" + CFG.rows);
+    log("設定 window=" + CFG.window + "s 通知門檻=非1幣≥" + Math.round(CFG.frac * 100) + "% minWinners=" + CFG.minWinners + " rows=" + CFG.rows);
     await oneCycle();
     process.exit(0);
   }
@@ -735,7 +735,7 @@ async function main() {
   log(`🎯 開始監視。${MODULE_ONLY
     ? `module ${DRAWMOD}（feed 模式，event id 未知）`
     : active ? `活動剩餘: ${Math.round(st.left / 60)} 分（結束 ${st.end}）` : "待機/未知"}`);
-  log(`設定 window=${CFG.window}s burst=${CFG.burst} frac=${CFG.frac} minWinners=${CFG.minWinners} cooldown=${CFG.cooldown}s interval=${CFG.interval}s` + (CFG.keepAlive ? " keepAlive=on(24h)" : ""));
+  log(`設定 window=${CFG.window}s 通知門檻=非1幣≥${Math.round(CFG.frac * 100)}% minWinners=${CFG.minWinners} cooldown=${CFG.cooldown}s interval=${CFG.interval}s` + (CFG.keepAlive ? " keepAlive=on(24h)" : ""));
   if (active) {
     await sendBark("📡 監視器上線", `開始監視幸運蝦轉盤，每 ${CFG.interval} 秒一輪。非1幣大量出現時會通知。`);
   } else if (CFG.keepAlive) {
