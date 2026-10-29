@@ -81,6 +81,7 @@ const CFG = {
   // 24/7 模式：活動結束不退出，待機並自動偵測「新一天的新場次」再繼續盯
   keepAlive: process.argv.includes("--keep-alive"),
   noDiscover: process.argv.includes("--no-discover"), // 關閉「待機時搜尋發現新場次」
+  noBark: process.argv.includes("--no-bark"), // 只收集資料、不推播（給本機圖表用，通知交給雲端）
 };
 
 // ----------------------------------------------------------------------------
@@ -167,6 +168,7 @@ async function fetchRecent(maxAttempts = 3) {
 }
 
 async function sendBark(title, body, group = "shopee-lucky") {
+  if (CFG.noBark) return false; // 資料收集模式：不推播（通知由雲端負責）
   if (!CFG.barkKey) { log(`⚠ 未設定 BARK_KEY，無法推播。\n  title=${title}\n  body=${body}`); return false; }
   const url = `${CFG.barkUrl}/${encodeURIComponent(CFG.barkKey)}/${encodeURIComponent(title)}/${encodeURIComponent(body)}?group=${group}&isArchive=1&ttl=${CFG.ttl}`;
   try {
@@ -705,7 +707,7 @@ async function main() {
     log(`FB 偵測結果：match=${fb.match ? fb.match.id + "「" + fb.match.name + "」" : "無"} announced=${fb.announced}${fb.desc ? " desc=" + fb.desc.slice(0, 60) : ""}`);
     process.exit(0);
   }
-  if (!CFG.barkKey && !CFG.once) {
+  if (!CFG.barkKey && !CFG.once && !CFG.noBark) {
     console.error("❌ 請設定 Bark key：BARK_KEY=xxx node monitor.mjs  （或 --bark-key xxx）\n   沒有 key 會無法推播。先跑 node monitor.mjs --test 驗證。");
     process.exit(1);
   }
@@ -735,7 +737,7 @@ async function main() {
   log(`🎯 開始監視。${MODULE_ONLY
     ? `module ${DRAWMOD}（feed 模式，event id 未知）`
     : active ? `活動剩餘: ${Math.round(st.left / 60)} 分（結束 ${st.end}）` : "待機/未知"}`);
-  log(`設定 window=${CFG.window}s 通知門檻=非1幣≥${Math.round(CFG.frac * 100)}% minWinners=${CFG.minWinners} cooldown=${CFG.cooldown}s interval=${CFG.interval}s` + (CFG.keepAlive ? " keepAlive=on(24h)" : ""));
+  log(`設定 window=${CFG.window}s 通知門檻=非1幣≥${Math.round(CFG.frac * 100)}% minWinners=${CFG.minWinners} cooldown=${CFG.cooldown}s interval=${CFG.interval}s` + (CFG.keepAlive ? " keepAlive=on(24h)" : "") + (CFG.noBark ? " no-bark=on（只收資料）" : ""));
   if (active) {
     await sendBark("📡 監視器上線", `開始監視幸運蝦轉盤，每 ${CFG.interval} 秒一輪。非1幣大量出現時會通知。`);
   } else if (CFG.keepAlive) {
