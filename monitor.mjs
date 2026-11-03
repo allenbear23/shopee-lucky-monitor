@@ -84,9 +84,36 @@ const CFG = {
   noDiscover: process.argv.includes("--no-discover"), // 關閉「待機時搜尋發現新場次」
   noBark: process.argv.includes("--no-bark"), // 只收集資料、不推播（給本機圖表用，通知交給雲端）
   menu: process.argv.includes("--menu"),
+  chart: process.argv.includes("--chart"),
 };
 
-// 互動式調參選單（方向鍵上下選項、左右調數字、Enter 開始、q 離開）
+// 終端 ASCII 折線圖
+const chartHist = []; // [{t, total, non, frac}]
+function sparkline(data, maxW = 40) {
+  if (!data.length) return "";
+  const vals = data.slice(-maxW);
+  const max = Math.max(...vals, 1);
+  const min = Math.min(...vals, 0);
+  const range = max - min || 1;
+  const blocks = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+  return vals.map(v => {
+    const idx = Math.floor(((v - min) / range) * (blocks.length - 1));
+    return blocks[idx];
+  }).join("");
+}
+
+function drawChart() {
+  if (!chartHist.length) return;
+  const recent = chartHist.slice(-60);
+  const fracVals = recent.map(x => x.frac);
+  const totalVals = recent.map(x => x.total);
+  const last = recent[recent.length - 1];
+  console.log("");
+  console.log(`  ${color(C.cyan, "非1幣佔比")} ${color(C.red, last.frac.toFixed(1) + "%")}  ${color(C.dim, "|")}  ${color(C.cyan, "中獎數")} ${color(C.green, last.total)}`);
+  console.log(`  ${color(C.dim, "佔比")} ${color(C.red, sparkline(fracVals))}`);
+  console.log(`  ${color(C.dim, "數量")} ${color(C.green, sparkline(totalVals))}`);
+  console.log(color(C.dim, `  └─ 過去 ${recent.length} 輪（每 ${CFG.interval}s）`) + C.reset);
+}
 const MENU_ITEMS = [
   { key: "interval", label: "每幾秒抓一次 (秒)", min: 5, step: 5 },
   { key: "window", label: "統計時間窗 (秒)", min: 30, step: 30 },
@@ -583,6 +610,11 @@ async function oneCycle() {
       n1: nCoin1, n30, n50, n100, n10: nCoin10,
       leftMin, alert: alerted,
     });
+    if (CFG.chart) {
+      chartHist.push({ t: now(), total, non: non.length, frac: +frac.toFixed(1) });
+      if (chartHist.length > 200) chartHist.splice(0, chartHist.length - 200);
+      drawChart();
+    }
 
     // feed 模式：靠 feed 新鮮度判斷本場是否結束（連續多輪落後超過門檻）
     if (feedMode) {
