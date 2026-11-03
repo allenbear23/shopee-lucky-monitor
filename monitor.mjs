@@ -92,10 +92,11 @@ function loadTarget() {
     if (j.event) { EVENT = String(j.event).toLowerCase(); MODULE_ONLY = false; }
     else if (j.drawmod) { MODULE_ONLY = true; }
     if (j.drawmod) DRAWMOD = +j.drawmod;
+    if (j.moduleCursor) moduleCursor = +j.moduleCursor;
   } catch {}
 }
 function saveTarget() {
-  try { writeFileSync(TARGET_FILE, JSON.stringify({ event: MODULE_ONLY ? "" : EVENT, drawmod: DRAWMOD, savedAt: Math.floor(now()) }, null, 2)); } catch {}
+  try { writeFileSync(TARGET_FILE, JSON.stringify({ event: MODULE_ONLY ? "" : EVENT, drawmod: DRAWMOD, moduleCursor, savedAt: Math.floor(now()) }, null, 2)); } catch {}
 }
 loadTarget();
 const cliEventId =
@@ -117,10 +118,24 @@ let idleScanCount = 0;     // 待機掃描次數（搜尋發現每 3 次跑一�
 const ACTIVE_LAG = 120;    // feed「正在滾動」判定：最新中獎距今 ≤ 此秒數才算新場次（原本 900 太寬會誤判）
 const FEED_END_LAG = 1800; // feed 模式：落後 > 此秒數（30 分）→ 視為本場結束
 
+const C = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+};
+function color(code, s) { return process.stdout.isTTY ? `${code}${s}${C.reset}` : s; }
+function tag(name, code) { return `[${color(code, name)}]`; }
+
 function log(msg) {
   const line = `[${new Date().toLocaleTimeString("zh-TW", { hour12: false })}] ${msg}`;
   console.log(line);
-  try { appendFileSync("monitor.log", line + "\n"); } catch {}
+  try { appendFileSync("monitor.log", line.replace(/\x1b\[[0-9;]*m/g, "") + "\n"); } catch {}
 }
 
 // 每輪統計寫入 JSONL（dashboard 讀取畫圖）；過大時裁掉舊資料
@@ -205,7 +220,7 @@ async function switchEvent(id, reason) {
   EVENT = id;
   DRAWMOD = mod;
   MODULE_ONLY = false;
-  moduleCursor = 0;
+  moduleCursor = DRAWMOD + 1;
   saveTarget();
   announcedEnd = false;
   feedMode = false;
@@ -219,7 +234,7 @@ async function switchEvent(id, reason) {
 async function switchModule(mod, reason) {
   DRAWMOD = +mod;
   MODULE_ONLY = true;
-  moduleCursor = 0;
+  moduleCursor = DRAWMOD + 1;
   saveTarget();
   announcedEnd = false;
   feedMode = true;
@@ -227,79 +242,6 @@ async function switchModule(mod, reason) {
   sawActive = true;
   lastAlert = 0;
   log(`🎯 切換監視目標 → module ${DRAWMOD}（${reason}；event id 未知，走 feed 模式）`);
-}
-
-let OUR_FP = null; // 本活動的品牌指紋（Asset.Template 雜湊＋活動名），用來過濾搜尋發現的場次是不是「這一家」
-
-async function fingerprintEvent(id) {
-  const d = (await getJson(settingsUrlOf(id))).data;
-  const t = (d.modules || []).find((x) => x.module_name === "Asset.Template");
-  let templateCdn = null;
-  if (t) {
-    try {
-      const a = (await getJson(`https://games.shopee.tw/gameplatform/api/v2/asset/list?appid=${APPID}&module_ids=${t.module_id}`)).data;
-      templateCdn = a && a[0] ? a[0].cdn : null;
-    } catch {}
-  }
-  return { templateCdn, name: (d.basic?.game_name || "").slice(0, 20) };
-}
-
-// 本店跨期穩定指紋（10/10、10/11 的 Asset.Template 雜湊一致）：搜尋/FB 發現的場次若是
-// 他店（同一 sellerlck 平台但不同賣家）一律不自動接。OUR_FP 可在啟動時由目前 event 算出，
-// 算不出時退回本常數。
-const OUR_TEMPLATE_CDN = "03b8f1640e10aaf22ffbddfb6949467e_1717056092";
-function sameFingerprint(fp) {
-  if (!fp || !fp.templateCdn) return false;
-  const base = (OUR_FP && OUR_FP.templateCdn) || OUR_TEMPLATE_CDN;
-  return fp.templateCdn === base;
-}
-
-async function searchEventIds() {
-  // DDG-lite 為主（直接給外部連結），Bing RSS 為輔
-  const ids = new Set();
-  const queries = ["games.shopee.tw sellerlck event", "games.shopee.tw/sellerlck/event", "site:games.shopee.tw sellerlck"];
-  for (const q of queries) {
-    try {
-      const r = await fetch("https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent(q), {
-        headers: { "User-Agent": UA, Accept: "text/html" },
-      });
-      if (r.ok) {
-        const html = await r.text();
-        for (const m of html.matchAll(/<a[^>]+href="([^"]+)"/g)) {
-          const id = extractEventId(m[1]);
-          if (id) ids.add(id);
-        }
-      }
-    } catch {}
-    await sleep(1500);
-  }
-  return [...ids];
-}
-
-async function discoverNewActiveEvent() {
-  // 掃搜尋引擎已知連結：
-  //  - 只要「進行中 ＋ Template 雜湊與本活動相同」→ 判定是同一家的新場次，回傳當候選
-  //  - 其他進行中的場次（他店）只記錄回報，不自動接
-  const ids = await searchEventIds();
-  if (!ids.length) return { match: null, others: [] };
-  const others = [];
-  for (const id of ids) {
-    if (id === EVENT) continue;
-    try {
-      const st = await getEventStatus(id);
-      if (st.ended) continue;
-      const begin = st.data?.basic?.begin_time || 0;
-      if (begin > now() || begin <= 0) continue; // 未開或無效
-      const fp = await fingerprintEvent(id);
-      const ev = { id, end: st.end, left: st.left, name: fp.name };
-      if (sameFingerprint(fp)) {
-        return { match: ev, others }; // 同模板 → 很可能是同一家
-      }
-      others.push(ev);
-    } catch {}
-    await sleep(400);
-  }
-  return { match: null, others };
 }
 
 // ----------------------------------------------------------------------------
@@ -311,7 +253,7 @@ async function discoverActiveModule() {
   const base = +DRAWMOD || 0;
   if (!base) return null;
   if (moduleCursor < base + 1) moduleCursor = base + 1;
-  const end = base + 200;
+  const end = base + 10000;
   const stop = Math.min(moduleCursor + 39, end); // 每輪掃 40 個，分散請求
   for (let id = moduleCursor; id <= stop; id++) {
     moduleCursor = id + 1;
@@ -319,146 +261,21 @@ async function discoverActiveModule() {
       const r = await fetch(`https://games.shopee.tw/gameplatform/api/v2/goluckydraw/prize/list/module/${id}?appid=${APPID}&offset=0&limit=10`, {
         headers: { "User-Agent": UA, Referer: "https://games.shopee.tw/sellerlck/" },
       });
-      if (!r.ok) { if (r.status === 403 || r.status === 429) { moduleCursor = 0; break; } continue; }
+      if (!r.ok) { if (r.status === 403 || r.status === 429) { moduleCursor = base + 1; break; } continue; }
       const j = await r.json().catch(() => null);
       const rows = (j && j.data) || [];
       if (!rows.length) continue;
       const latest = Math.max(...rows.map((x) => x.lucky_time || 0));
       if (now() - latest > ACTIVE_LAG) continue;
       if (!rows.some((x) => x.package_name === "1 活動蝦幣")) continue;
+      try { saveTarget(); } catch {}
       return id;
     } catch {}
     await sleep(250);
   }
-  if (moduleCursor > end) moduleCursor = 0; // 掃完一輪，下輪從頭
+  if (moduleCursor > end) moduleCursor = base + 1; // 掃完一輪，下輪從頭（保留游標而非歸零）
+  try { saveTarget(); } catch {}
   return null;
-}
-
-// ----------------------------------------------------------------------------
-// FB 社團情報偵測：賣場（蝦皮特選/shopee_choice_hl）每天在 FB 社團公告轉盤
-//（「每天都要轉轉盤…」+ s.shopee.tw 短網址 / 直連 games.shopee.tw）。貼文 meta
-// 免登入即可讀，baby 級流量，每 15 分鐘重新搜尋一次貼文清單。
-// ----------------------------------------------------------------------------
-const FB_QUERIES = [
-  "site:facebook.com/groups/shopeechoicetw 轉盤",
-  "site:facebook.com/groups/shopeechoicetw",
-  "site:facebook.com/groups/ShopeeGames sellerlck",
-];
-let fbSeen = new Set();      // 已處理過的貼文 URL
-let lastFbSearch = 0;        // 最近一次搜尋貼文清單的時間
-const FB_STATE_FILE = "fb-state.json";
-let fbAnnouncedDay = "";     // 已通知「公告開跑但缺連結」的台灣日期（持久化：跨重啟不重複轟炸）
-try { fbAnnouncedDay = JSON.parse(readFileSync(FB_STATE_FILE, "utf8")).day || ""; } catch {}
-
-function fbDecode(s) {
-  return String(s || "")
-    .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n))
-    .replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCharCode(parseInt(n, 16)))
-    .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<");
-}
-
-async function fbDdgPostUrls() {
-  const urls = new Set();
-  for (const q of FB_QUERIES) {
-    try {
-      const r = await fetch("https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent(q), {
-        headers: { "User-Agent": UA, Accept: "text/html" },
-      });
-      if (r.ok) {
-        const html = await r.text();
-        for (const m of html.matchAll(/<a[^>]+href="([^"]+)"/g)) {
-          if (/facebook\.com\/groups\/(shopeechoicetw|ShopeeGames)\/(posts|permalink)\//.test(m[1])) {
-            urls.add(m[1].split("?")[0]);
-          }
-        }
-      }
-    } catch {}
-    await sleep(1200);
-  }
-  return [...urls];
-}
-
-async function fbPostMeta(url) {
-  const r = await fetch(url, { headers: { "User-Agent": UA } });
-  if (!r.ok) return "";
-  const t = await r.text();
-  const d = (t.match(/<meta[^>]+(?:property|name)="(?:og:description|description)"[^>]+content="([^"]*)"/i) || [])[1] || "";
-  return fbDecode(d);
-}
-
-async function resolveShortLink(code) {
-  // s.shopee.tw 是 JS 著陸頁，內嵌 CONFIG.httpUrl 才是真正目的地
-  const r = await fetch(`https://s.shopee.tw/${code}`, { headers: { "User-Agent": UA } });
-  if (!r.ok) return null;
-  const t = await r.text();
-  const m = t.match(/httpUrl:\s*"([^"]+)"/);
-  if (!m) return null;
-  const url = fbDecode(m[1]).replace(/\\\//g, "/");
-  const idM = url.match(/sellerlck\/event\/([0-9a-f]{8,})/i);
-  return { url, event: idM ? idM[1].toLowerCase() : null, isStore: /shopee_choice_hl/.test(url) };
-}
-
-async function discoverFromFb() {
-  // 新貼文清單（每 15 分鐘刷新一次）
-  let newPosts = [];
-  if (Date.now() - lastFbSearch > 15 * 60 * 1000) {
-    lastFbSearch = Date.now();
-    const urls = await fbDdgPostUrls();
-    newPosts = urls.filter((u) => !fbSeen.has(u));
-    newPosts.forEach((u) => fbSeen.add(u));
-  }
-  if (!newPosts.length) return { match: null, announced: false };
-  const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10); // Asia/Taipei 日期（用 UTC 會跨日重複通知）
-  let announced = false;
-  let announcedDesc = "";
-  for (const u of newPosts) {
-    try {
-      const d = await fbPostMeta(u);
-      const hasKeyword = /轉盤|幸運|蝦幣/.test(d);
-      // 直連遊戲連結：不靠關鍵字（有人可能只貼連結），靠「進行中＋本店指紋」過濾他店
-      for (const m of d.matchAll(/sellerlck\/event\/([0-9a-f]{8,})/gi)) {
-        const id = m[1].toLowerCase();
-        if (id === EVENT) continue;
-        try {
-          const st = await getEventStatus(id);
-          if (!st.ended && (st.data?.basic?.begin_time || 0) <= now()) {
-            const fp = await fingerprintEvent(id);
-            if (sameFingerprint(fp)) {
-              return {
-                match: { id, end: st.end, left: st.left, name: fp.name || (st.data?.basic?.game_name || "").slice(0, 16), from: "FB貼文" },
-                announced, desc: announcedDesc,
-              };
-            }
-          }
-        } catch {}
-      }
-      // 短網址（可能指到遊戲頁或賣場頁）
-      for (const m of d.matchAll(/s\.shopee\.tw\/([A-Za-z0-9]{8,})/g)) {
-        const info = await resolveShortLink(m[1]);
-        if (!info) continue;
-        if (info.event && info.event !== EVENT) {
-          try {
-            const st = await getEventStatus(info.event);
-            if (!st.ended && (st.data?.basic?.begin_time || 0) <= now()) {
-              const fp = await fingerprintEvent(info.event);
-              if (sameFingerprint(fp)) {
-                return {
-                  match: { id: info.event, end: st.end, left: st.left, name: fp.name || (st.data?.basic?.game_name || "").slice(0, 16), from: "FB短網址" },
-                  announced, desc: announcedDesc,
-                };
-              }
-            }
-          } catch {}
-        } else if (info.isStore && hasKeyword && !announced && fbAnnouncedDay !== today) {
-          fbAnnouncedDay = today;
-          try { writeFileSync(FB_STATE_FILE, JSON.stringify({ day: today })); } catch {}
-          announced = true;
-          announcedDesc = d;
-        }
-      }
-    } catch {}
-  }
-  return { match: null, announced, desc: announcedDesc };
 }
 
 // ----------------------------------------------------------------------------
@@ -470,6 +287,22 @@ function manualTargetText() {
 }
 function clearManualTarget() {
   try { writeFileSync("manual-target.txt", ""); } catch {}
+}
+function fbDecode(s) {
+  return String(s || "")
+    .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n))
+    .replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<");
+}
+async function resolveShortLink(code) {
+  const r = await fetch(`https://s.shopee.tw/${code}`, { headers: { "User-Agent": UA } });
+  if (!r.ok) return null;
+  const t = await r.text();
+  const m = t.match(/httpUrl:\s*"([^"]+)"/);
+  if (!m) return null;
+  const url = fbDecode(m[1]).replace(/\\\//g, "/");
+  const idM = url.match(/sellerlck\/event\/([0-9a-f]{8,})/i);
+  return { url, event: idM ? idM[1].toLowerCase() : null, isStore: /shopee_choice_hl/.test(url) };
 }
 async function handleManualTarget(reason) {
   try {
@@ -554,7 +387,19 @@ async function oneCycle() {
     const frac = total ? (non.length / total) * 100 : 0;
     const leftMin = left == null ? null : Math.round(left / 60);
 
-    log(`feed lag=${Math.round(lag)}s${stale} | 近${CFG.window}s: ${total}中獎（獨立用戶 ${uniqUsers}）, 非1幣=${non.length}(${frac.toFixed(1)}%) [1幣${nCoin1}/30券${n30}/50券${n50}/100券${n100}/10幣${nCoin10}] | ${feedMode ? "feed模式" : "距結束≈" + leftMin + "分"}`);
+    const lagColor = lag <= CFG.freshLag ? C.green : lag <= CFG.freshLag * 3 ? C.yellow : C.red;
+    const fracColor = frac >= CFG.frac * 100 ? C.red : C.green;
+    const modeColor = feedMode ? C.magenta : C.blue;
+    const modeLabel = feedMode ? "feed模式" : `距結束≈${leftMin == null ? "?" : leftMin}分`;
+    const bar = "█".repeat(Math.min(20, Math.round((frac / 100) * 20))).padEnd(20);
+    log(
+      `${color(C.cyan, `lag=${Math.round(lag)}s`)}` +
+      `${stale ? color(C.yellow, " ⚠STALE") : ""}` +
+      ` | 近${CFG.window}s: ${color(C.green, total)}中獎（獨立用戶 ${color(C.green, uniqUsers)}）` +
+      ` 非1幣=${color(fracColor, non.length)}(${color(fracColor, frac.toFixed(1))}%) ${color(C.dim, bar)}` +
+      ` [1幣${nCoin1}/30券${n30}/50券${n50}/100券${n100}/10幣${nCoin10}]` +
+      ` | ${color(modeColor, modeLabel)}`
+    );
 
     // burst 判斷
     const enough = total >= CFG.minWinners;
@@ -707,6 +552,36 @@ async function main() {
     log(`FB 偵測結果：match=${fb.match ? fb.match.id + "「" + fb.match.name + "」" : "無"} announced=${fb.announced}${fb.desc ? " desc=" + fb.desc.slice(0, 60) : ""}`);
     process.exit(0);
   }
+  // 支援直接貼上轉盤連結切換：--link "https://..." 或 --url
+  const cliLink = arg("link", arg("add", "")) || "";
+  if (cliLink) {
+    try {
+      let id = null;
+      let mod = null;
+      const txt = cliLink.trim();
+      if (/^\d{5,9}$/.test(txt)) {
+        mod = +txt;
+      } else {
+        id = (txt.match(/[0-9a-f]{16,}/i) || [])[0]?.toLowerCase();
+        if (!id) id = extractEventId(txt);
+        if (!id) {
+          const code = (txt.match(/s\.shopee\.tw\/([A-Za-z0-9]{8,})/i) || [])[1];
+          if (code) { const info = await resolveShortLink(code); id = info?.event || null; }
+        }
+      }
+      if (mod) {
+        await switchModule(mod, "手動連結(--link)");
+        log(`🎯 已直接接管 module ${DRAWMOD}（--link）`);
+      } else if (id) {
+        await switchEvent(id, "手動連結(--link)");
+        log(`🎯 已直接接管 event ${EVENT} / module ${DRAWMOD}（--link）`);
+      } else {
+        log(`⚠ --link 無法解析：${txt.slice(0, 80)}`);
+      }
+    } catch (e) {
+      log(`⚠ --link 處理失敗: ${e.message.slice(0, 80)}`);
+    }
+  }
   if (!CFG.barkKey && !CFG.once && !CFG.noBark) {
     console.error("❌ 請設定 Bark key：BARK_KEY=xxx node monitor.mjs  （或 --bark-key xxx）\n   沒有 key 會無法推播。先跑 node monitor.mjs --test 驗證。");
     process.exit(1);
@@ -734,10 +609,19 @@ async function main() {
   }
   const st = MODULE_ONLY ? null : await getEventStatus().catch(() => null);
   const active = MODULE_ONLY || (st !== null && !st.ended);
-  log(`🎯 開始監視。${MODULE_ONLY
-    ? `module ${DRAWMOD}（feed 模式，event id 未知）`
-    : active ? `活動剩餘: ${Math.round(st.left / 60)} 分（結束 ${st.end}）` : "待機/未知"}`);
-  log(`設定 window=${CFG.window}s 通知門檻=非1幣≥${Math.round(CFG.frac * 100)}% minWinners=${CFG.minWinners} cooldown=${CFG.cooldown}s interval=${CFG.interval}s` + (CFG.keepAlive ? " keepAlive=on(24h)" : "") + (CFG.noBark ? " no-bark=on（只收資料）" : ""));
+  console.log(color(C.bold, "╔═════════════════════════════════════════════════╗"));
+  console.log(color(C.bold, "║") + "  " + color(C.cyan, "🎯 幸運蝦轉盤監控已啟動") + " ".repeat(29) + color(C.bold, "║"));
+  console.log(color(C.bold, "╠═════════════════════════════════════════════════╣"));
+  const targetLine = MODULE_ONLY ? `module ${DRAWMOD} (event id 未知)` : `event ${EVENT} / module ${DRAWMOD}`;
+  console.log(color(C.bold, "║") + `  目標：${color(C.yellow, targetLine)}` + " ".repeat(46 - targetLine.length) + color(C.bold, "║"));
+  const modeLine = MODULE_ONLY ? "feed模式（event id 未知）" : active ? `活動剩餘 ${Math.round(st.left / 60)} 分（結束 ${st.end}）` : "待機/未知";
+  console.log(color(C.bold, "║") + `  模式：${color(C.green, modeLine)}` + " ".repeat(46 - modeLine.length) + color(C.bold, "║"));
+  const cfgLine = `非1幣 ≥ ${Math.round(CFG.frac * 100)}% | 最少 ${CFG.minWinners} 人 | 冷卻 ${CFG.cooldown}s | 間隔 ${CFG.interval}s`;
+  console.log(color(C.bold, "║") + `  門檻：${color(C.green, cfgLine)}` + " ".repeat(46 - cfgLine.length) + color(C.bold, "║"));
+  const statLine = `${CFG.keepAlive ? "keepAlive=on(24h)" : ""} ${CFG.noBark ? "no-bark=on（只收資料）" : ""}`.trim() || "一般模式";
+  console.log(color(C.bold, "║") + `  狀態：${color(C.green, statLine)}` + " ".repeat(46 - statLine.length) + color(C.bold, "║"));
+  console.log(color(C.bold, "╚═════════════════════════════════════════════════╝"));
+  console.log("");
   if (active) {
     await sendBark("📡 監視器上線", `開始監視幸運蝦轉盤，每 ${CFG.interval} 秒一輪。非1幣大量出現時會通知。`);
   } else if (CFG.keepAlive) {
