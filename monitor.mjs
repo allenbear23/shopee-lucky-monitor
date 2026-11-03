@@ -32,6 +32,7 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 import { appendFileSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import readline from "node:readline";
 
 // 目前監視目標（可跨期動態更換：--event / --url 指定，或待機時由搜尋發現自動切換）
 let EVENT = "1851933cb3be1af7";
@@ -82,7 +83,63 @@ const CFG = {
   keepAlive: process.argv.includes("--keep-alive"),
   noDiscover: process.argv.includes("--no-discover"), // 關閉「待機時搜尋發現新場次」
   noBark: process.argv.includes("--no-bark"), // 只收集資料、不推播（給本機圖表用，通知交給雲端）
+  menu: process.argv.includes("--menu"),
 };
+
+// 互動式調參選單
+function showMenu() {
+  console.log("\n\x1b[1m╔══════════════════════════════════════════╗");
+  console.log("║          Shopee 監控 - 參數調整選單        ║");
+  console.log("╚══════════════════════════════════════════╝\x1b[0m");
+  console.log("\n目前設定：");
+  console.log(`  1) interval    = ${CFG.interval} 秒（每幾秒抓一次）`);
+  console.log(`  2) window      = ${CFG.window} 秒（統計時間窗）`);
+  console.log(`  3) min-winners = ${CFG.minWinners} 人（最少中獎人才判斷）`);
+  console.log(`  4) frac        = ${CFG.frac}（非1幣佔比門檻，0.9 = 90%）`);
+  console.log(`  5) cooldown    = ${CFG.cooldown} 秒（同一波冷卻）`);
+  console.log(`  6) keep-alive  = ${CFG.keepAlive ? "開啟" : "關閉"}`);
+  console.log(`  7) no-bark     = ${CFG.noBark ? "開啟（只收資料）" : "關閉（推播）"}`);
+  console.log(`  8) 開始監控（套用以上設定）`);
+  console.log(`  9) 離開\n`);
+}
+
+async function runMenu() {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise((res) => rl.question(q, res));
+  while (true) {
+    showMenu();
+    const choice = (await ask("請選擇 (1-9): ")).trim();
+    if (choice === "1") {
+      const v = (await ask(`interval（目前 ${CFG.interval} 秒）: `)).trim();
+      if (v) CFG.interval = Math.max(5, +v || CFG.interval);
+    } else if (choice === "2") {
+      const v = (await ask(`window（目前 ${CFG.window} 秒）: `)).trim();
+      if (v) CFG.window = Math.max(30, +v || CFG.window);
+    } else if (choice === "3") {
+      const v = (await ask(`min-winners（目前 ${CFG.minWinners} 人）: `)).trim();
+      if (v) CFG.minWinners = Math.max(1, +v || CFG.minWinners);
+    } else if (choice === "4") {
+      const v = (await ask(`frac（目前 ${CFG.frac}，例如 0.9）: `)).trim();
+      if (v) CFG.frac = Math.min(1, Math.max(0, +v || CFG.frac));
+    } else if (choice === "5") {
+      const v = (await ask(`cooldown（目前 ${CFG.cooldown} 秒）: `)).trim();
+      if (v) CFG.cooldown = Math.max(0, +v || CFG.cooldown);
+    } else if (choice === "6") {
+      CFG.keepAlive = !CFG.keepAlive;
+      console.log(`keep-alive 已${CFG.keepAlive ? "開啟" : "關閉"}`);
+    } else if (choice === "7") {
+      CFG.noBark = !CFG.noBark;
+      console.log(`no-bark 已${CFG.noBark ? "開啟（只收資料）" : "關閉（推播）"}`);
+    } else if (choice === "8") {
+      break;
+    } else if (choice === "9" || choice === "q" || choice === "exit") {
+      process.exit(0);
+    } else {
+      console.log("無效選項");
+    }
+  }
+  rl.close();
+}
 
 // ----------------------------------------------------------------------------
 // 監視目標解析：優先序 --event/--url > 環境變數 > target.json（上次記住的）> 內建預設
@@ -582,7 +639,7 @@ async function main() {
       log(`⚠ --link 處理失敗: ${e.message.slice(0, 80)}`);
     }
   }
-  if (!CFG.barkKey && !CFG.once && !CFG.noBark) {
+  if (!CFG.barkKey && !CFG.once && !CFG.noBark && !CFG.menu) {
     console.error("❌ 請設定 Bark key：BARK_KEY=xxx node monitor.mjs  （或 --bark-key xxx）\n   沒有 key 會無法推播。先跑 node monitor.mjs --test 驗證。");
     process.exit(1);
   }
@@ -592,6 +649,7 @@ async function main() {
     await oneCycle();
     process.exit(0);
   }
+  if (CFG.menu) await runMenu();
   // 手動餵入的目標優先（啟動時就有 manual-target.txt 就直接接管）
   try { if (await handleManualTarget("啟動時")) log(`🎯 啟動時由 manual-target.txt 接管目標`); } catch {}
   // 確保監視目標的 module 正確（target.json / --event / --url 可能換過 event）
