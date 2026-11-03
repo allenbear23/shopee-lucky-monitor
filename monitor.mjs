@@ -86,28 +86,121 @@ const CFG = {
   menu: process.argv.includes("--menu"),
 };
 
-// 互動式調參選單
-function showMenu() {
-  console.log("\n\x1b[1m╔══════════════════════════════════════════╗");
-  console.log("║          Shopee 監控 - 參數調整選單        ║");
-  console.log("╚══════════════════════════════════════════╝\x1b[0m");
-  console.log("\n目前設定：");
-  console.log(`  1) interval    = ${CFG.interval} 秒（每幾秒抓一次）`);
-  console.log(`  2) window      = ${CFG.window} 秒（統計時間窗）`);
-  console.log(`  3) min-winners = ${CFG.minWinners} 人（最少中獎人才判斷）`);
-  console.log(`  4) frac        = ${CFG.frac}（非1幣佔比門檻，0.9 = 90%）`);
-  console.log(`  5) cooldown    = ${CFG.cooldown} 秒（同一波冷卻）`);
-  console.log(`  6) keep-alive  = ${CFG.keepAlive ? "開啟" : "關閉"}`);
-  console.log(`  7) no-bark     = ${CFG.noBark ? "開啟（只收資料）" : "關閉（推播）"}`);
-  console.log(`  8) 開始監控（套用以上設定）`);
-  console.log(`  9) 離開\n`);
+// 互動式調參選單（方向鍵上下選項、左右調數字、Enter 開始、q 離開）
+const MENU_ITEMS = [
+  { key: "interval", label: "每幾秒抓一次 (秒)", min: 5, step: 5 },
+  { key: "window", label: "統計時間窗 (秒)", min: 30, step: 30 },
+  { key: "min-winners", label: "最少中獎人數才判斷", min: 1, step: 1 },
+  { key: "frac", label: "非1幣佔比門檻 (0~1)", min: 0.1, step: 0.1, dec: 1 },
+  { key: "cooldown", label: "同一波冷卻 (秒)", min: 0, step: 60 },
+];
+
+function menuValue(item) {
+  const v = CFG[item.key];
+  if (item.dec != null) return v.toFixed(item.dec);
+  return String(v);
+}
+
+function drawMenu(selected) {
+  console.clear();
+  console.log(C.bold + "╔══════════════════════════════════════════╗" + C.reset);
+  console.log(C.bold + "║" + C.cyan + "      Shopee 監控 - 參數調整選單" + " ".repeat(23) + C.bold + "║" + C.reset);
+  console.log(C.bold + "╚═══════════════════════════════════════════╝" + C.reset);
+  console.log("\n  方向鍵 ↑↓ 選項　←→ 調整數值　Enter 開始監控　q 離開\n");
+  MENU_ITEMS.forEach((item, i) => {
+    const invert = i === selected ? C.invert : "";
+    const val = color(item.dec != null ? C.magenta : C.green, menuValue(item));
+    console.log(`  ${i === selected ? "▶" : "  "} ${invert}${C.bold}${item.label}${C.reset}: ${val}${C.reset}`);
+  });
+  const actInvert = selected === MENU_ITEMS.length ? C.invert : "";
+  const exInvert = selected === MENU_ITEMS.length + 1 ? C.invert : "";
+  console.log(`  ${actInvert}${C.bold}啟動監控${C.reset}`);
+  console.log(`  ${exInvert}${C.bold}離開${C.reset}`);
+  console.log(`\n  Bark ${CFG.noBark ? color(C.magenta, "off") : color(C.green, "on")}｜${CFG.keepAlive ? color(C.green, "keep-alive on") : ""}`);
+}
+
+let menuRawRestored = false;
+function restoreStdin() {
+  if (menuRawRestored) return;
+  try { process.stdin.setRawMode(false); process.stdin.pause(); } catch {}
+  menuRawRestored = true;
 }
 
 async function runMenu() {
+  if (!process.stdout.isTTY) {
+    return runMenuText();
+  }
+  let selected = 0;
+  drawMenu(selected);
+
+  await new Promise((resolve) => {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+
+    const onKey = (ch) => {
+      if (ch === "\x1b[A") { // 上
+        selected = (selected - 1 + MENU_ITEMS.length + 2) % (MENU_ITEMS.length + 2);
+        drawMenu(selected);
+        return;
+      }
+      if (ch === "\x1b[B") { // 下
+        selected = (selected + 1) % (MENU_ITEMS.length + 2);
+        drawMenu(selected);
+        return;
+      }
+      if (ch === "q" || ch === "Q") {
+        restoreStdin();
+        process.exit(0);
+      }
+      if (ch === "\r" || ch === "\n") {
+        restoreStdin();
+        if (selected === MENU_ITEMS.length + 1) process.exit(0);
+        resolve(selected);
+        return;
+      }
+      if (ch === "\x1b[C") { // 右 → 增加
+        const item = MENU_ITEMS[selected];
+        if (item) {
+          let v = CFG[item.key] + item.step;
+          if (item.dec != null) v = Math.round(v * 10) / 10;
+          CFG[item.key] = v;
+        }
+        drawMenu(selected);
+        return;
+      }
+      if (ch === "\x1b[D") { // 左 �� 減少
+        const item = MENU_ITEMS[selected];
+        if (item) {
+          let v = CFG[item.key] - item.step;
+          if (v < item.min) v = item.min;
+          if (item.dec != null) v = Math.round(v * 10) / 10;
+          CFG[item.key] = v;
+        }
+        drawMenu(selected);
+        return;
+      }
+    };
+
+    process.stdin.on("data", onKey);
+  });
+}
+
+// 非 TTY 降級：數字選單
+async function runMenuText() {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q) => new Promise((res) => rl.question(q, res));
   while (true) {
-    showMenu();
+    console.log("\n" + C.bold + "Shopee 監控 - 參數調整" + C.reset);
+    console.log(`  1) interval    = ${CFG.interval} 秒`);
+    console.log(`  2) window      = ${CFG.window} 秒`);
+    console.log(`  3) min-winners = ${CFG.minWinners} 人`);
+    console.log(`  4) frac        = ${CFG.frac} (非1幣佔比)`);
+    console.log(`  5) cooldown    = ${CFG.cooldown} 秒`);
+    console.log(`  6) keep-alive  = ${CFG.keepAlive ? "開啟" : "關閉"}`);
+    console.log(`  7) no-bark     = ${CFG.noBark ? "開啟（只收資料）" : "關閉（推播）"}`);
+    console.log(`  8) 開始監控`);
+    console.log(`  9) 離開`);
     const choice = (await ask("請選擇 (1-9): ")).trim();
     if (choice === "1") {
       const v = (await ask(`interval（目前 ${CFG.interval} 秒）: `)).trim();
@@ -131,14 +224,15 @@ async function runMenu() {
       CFG.noBark = !CFG.noBark;
       console.log(`no-bark 已${CFG.noBark ? "開啟（只收資料）" : "關閉（推播）"}`);
     } else if (choice === "8") {
+      rl.close();
       break;
     } else if (choice === "9" || choice === "q" || choice === "exit") {
+      rl.close();
       process.exit(0);
     } else {
       console.log("無效選項");
     }
   }
-  rl.close();
 }
 
 // ----------------------------------------------------------------------------
@@ -185,6 +279,7 @@ const C = {
   blue: "\x1b[34m",
   magenta: "\x1b[35m",
   cyan: "\x1b[36m",
+  invert: "\x1b[7m",
 };
 function color(code, s) { return process.stdout.isTTY ? `${code}${s}${C.reset}` : s; }
 function tag(name, code) { return `[${color(code, name)}]`; }
