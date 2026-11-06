@@ -31,7 +31,7 @@
 // ============================================================================
 
 import { setTimeout as sleep } from "node:timers/promises";
-import { appendFileSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, statSync, existsSync } from "node:fs";
 import readline from "node:readline";
 
 // 目前監視目標（可跨期動態更換：--event / --url 指定，或待機時由搜尋發現自動切換）
@@ -795,6 +795,19 @@ async function idleScan() {
 
 // ----------------------------------------------------------------------------
 async function main() {
+  // 首次執行（無 bark-key.txt 且無 target.json）→ 自動進入設定精靈
+  const firstRun = !existsSync("bark-key.txt") && !existsSync("target.json");
+  if (firstRun && !CFG.test && !CFG.once && !CFG.setup && !CFG.menu) {
+    console.log("\n\x1b[1m╔══════════════════════════════════════════╗");
+    console.log("║      首次使用 — 請先完成基本設定            ║");
+    console.log("╚══════════════════════════════════════════╝\x1b[0m\n");
+    console.log("  此程式需要設定以下項目：");
+    console.log("  1. Bark 推播金鑰（可跳過，僅收資料）");
+    console.log("  2. 轉盤連結或 module id（可跳過，自動偵測）");
+    console.log("  3. 輪詢間隔、統計時間窗等參數\n");
+    await runSetup();
+    process.exit(0);
+  }
   if (CFG.test) {
     log(`測試 Bark → key=${CFG.barkKey ? CFG.barkKey.slice(0, 4) + "…" : "(未設定)"} url=${CFG.barkUrl}`);
     const ok = await sendBark("🧪 監視器測試", "如果收到這則通知表示 Bark 設定正確，之後 burst 才會推播。", "shopee-lucky-test");
@@ -836,8 +849,20 @@ async function main() {
     }
   }
   if (!CFG.barkKey && !CFG.once && !CFG.noBark && !CFG.menu && !CFG.setup) {
-    console.error("❌ 請設定 Bark key：BARK_KEY=xxx node monitor.mjs  （或 --bark-key xxx）\n   沒有 key 會無法推播。先跑 node monitor.mjs --test 驗證。");
-    process.exit(1);
+    console.log("\n\x1b[1m╔══════════════════════════════════════════╗");
+    console.log("║            尚未設定 Bark 推播金鑰            ║");
+    console.log("╚══════════════════════════════════════════╝\x1b[0m\n");
+    console.log("  你可以：");
+    console.log("  1. 執行設定精靈：node monitor.mjs --setup");
+    console.log("  2. 或設定環境變數：BARK_KEY=你的金鑰 node monitor.mjs");
+    console.log("  3. 或僅收集資料：node monitor.mjs --no-bark\n");
+    console.log("  按 Enter 繼續（僅收資料模式）...");
+    // 等待使用者按 Enter
+    await new Promise((res) => {
+      process.stdin.resume();
+      process.stdin.once("data", () => res());
+    });
+    CFG.noBark = true;
   }
   if (CFG.once) {
     log("🧪 --once 乾跑一輪（不推播、不循環）…");
