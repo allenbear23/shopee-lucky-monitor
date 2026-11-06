@@ -101,6 +101,7 @@ event id 每天換的場合，舊 id 顯示結束但 feed 突然又在滾 → �
 | `--cooldown` | 同一波冷卻（秒） | 600 |
 | `--keep-alive` | 結束後待機，自動接新場次 | 關 |
 | `--no-bark` | 不推播，只收資料 | 關 |
+| `--chart` / `--no-chart` | 終端即時 ASCII 折線圖 | 開啟 |
 | `--link` / `--add` | 貼連結或 module id 切換 | - |
 | `--once` | 只跑一輪就結束 | 關 |
 | `--test` | 測試 Bark | 關 |

@@ -84,7 +84,7 @@ const CFG = {
   noDiscover: process.argv.includes("--no-discover"), // 關閉「待機時搜尋發現新場次」
   noBark: process.argv.includes("--no-bark"), // 只收集資料、不推播（給本機圖表用，通知交給雲端）
   menu: process.argv.includes("--menu"),
-  chart: process.argv.includes("--chart"),
+  chart: !process.argv.includes("--no-chart"),
 };
 
 // 終端 ASCII 折線圖
