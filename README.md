@@ -9,16 +9,19 @@
 ```bash
 cd ~/shopee-sellerlck
 
-# 本地：只收集資料 + 看圖表（不上推播）
-node monitor.mjs --keep-alive --no-bark &
+# 預設：直接執行會先進入「設定與說明」（互動式精靈）
+node monitor.mjs
+
+# 直接開始監控（跳過設定）：加 --keep-alive 或 --no-bark
+node monitor.mjs --keep-alive --no-bark &   # 只收資料 + 圖表資料
 node dashboard.mjs &
 
-# 本地：同時推播通知
+# 同時推播通知
 BARK_KEY=你的金鑰 node monitor.mjs --keep-alive &
 node dashboard.mjs &
 ```
 
-打開 http://127.0.0.1:8787 看圖表。
+打開 http://127.0.0.1:8787 看圖表。首次使用建議先跑 `node monitor.mjs` 完成設定，或用 `node monitor.mjs --setup` / `--menu`。
 
 ---
 
@@ -79,7 +82,9 @@ event id 每天換的場合，舊 id 顯示結束但 feed 突然又在滾 → �
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  1. 啟動 → 讀 target.json → 取得上次的 module id        │
+│  0. 互動式直接啟動（無 --keep-alive/--no-bark）          │
+│     → 預設先進入設定與說明（--setup 精靈）               │
+│  1. 啟動監控 → 讀 target.json → 取得上次的 module id    │
 │  2. 抓取中獎榜 feed → 統計近 180 秒內的中獎者            │
 │  3. 計算「非 1 幣」佔比 → 若 ≥90% 且 ≥20 人 → Bark 通知 │
 │  4. 每 interval 秒重複 2-3                               │
@@ -99,8 +104,10 @@ event id 每天換的場合，舊 id 顯示結束但 feed 突然又在滾 → �
 | `--min-winners` | 最少中獎人才判斷 | 20 |
 | `--frac` | 非 1 幣佔比門檻 | 0.9 (90%) |
 | `--cooldown` | 同一波冷卻（秒） | 600 |
-| `--keep-alive` | 結束後待機，自動接新場次 | 關 |
-| `--no-bark` | 不推播，只收資料 | 關 |
+| `--keep-alive` | 結束後待機，自動接新場次（**直接啟動監控**） | 關 |
+| `--no-bark` | 不推播，只收資料（**直接啟動監控**） | 關 |
+| `--setup` | 開啟設定精靈與說明 | - |
+| `--menu` | 互動式參數選單（方向鍵調整） | 關 |
 | `--chart` / `--no-chart` | 終端即時 ASCII 折線圖 | 開啟 |
 | `--link` / `--add` | 貼連結或 module id 切換 | - |
 | `--once` | 只跑一輪就結束 | 關 |
