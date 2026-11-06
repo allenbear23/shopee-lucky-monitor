@@ -9,10 +9,10 @@
 ```bash
 cd ~/shopee-sellerlck
 
-# 預設：直接執行會先進入「設定與說明」（互動式精靈）
+# 預設：直接執行會先開啟「參數選單」（互動式，方向鍵調整後啟動）
 node monitor.mjs
 
-# 直接開始監控（跳過設定）：加 --keep-alive 或 --no-bark
+# 直接開始監控（跳過選單）：加 --keep-alive 或 --no-bark
 node monitor.mjs --keep-alive --no-bark &   # 只收資料 + 圖表資料
 node dashboard.mjs &
 
@@ -21,7 +21,7 @@ BARK_KEY=你的金鑰 node monitor.mjs --keep-alive &
 node dashboard.mjs &
 ```
 
-打開 http://127.0.0.1:8787 看圖表。首次使用建議先跑 `node monitor.mjs` 完成設定，或用 `node monitor.mjs --setup` / `--menu`。
+打開 http://127.0.0.1:8787 看圖表。完整設定（Bark key / 目標）用 `node monitor.mjs --setup`。
 
 ---
 
@@ -83,7 +83,7 @@ event id 每天換的場合，舊 id 顯示結束但 feed 突然又在滾 → �
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  0. 互動式直接啟動（無 --keep-alive/--no-bark）          │
-│     → 預設先進入設定與說明（--setup 精靈）               │
+│     → 預設開啟參數選單（--menu），選完可直接啟動監控     │
 │  1. 啟動監控 → 讀 target.json → 取得上次的 module id    │
 │  2. 抓取中獎榜 feed → 統計近 180 秒內的中獎者            │
 │  3. 計算「非 1 幣」佔比 → 若 ≥90% 且 ≥20 人 → Bark 通知 │

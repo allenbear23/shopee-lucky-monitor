@@ -801,11 +801,10 @@ async function main() {
     console.log("\n\x1b[1m╔══════════════════════════════════════════╗");
     console.log("║      Shopee 監控 — 設定與說明                ║");
     console.log("╚══════════════════════════════════════════╝\x1b[0m\n");
-    console.log("  直接執行 node monitor.mjs 預設先進入設定/說明。");
-    console.log("  跳過設定直接啟動：加 --keep-alive 或 --no-bark");
-    console.log("  參數選單：加 --menu\n");
-    await runSetup();
-    process.exit(0);
+    console.log("  直接執行 node monitor.mjs 預設開啟參數選單。");
+    console.log("  完整設定（Bark key / 目標）：node monitor.mjs --setup");
+    console.log("  跳過直接啟動：加 --keep-alive 或 --no-bark\n");
+    await runMenu();
   }
   if (CFG.test) {
     log(`測試 Bark → key=${CFG.barkKey ? CFG.barkKey.slice(0, 4) + "…" : "(未設定)"} url=${CFG.barkUrl}`);
