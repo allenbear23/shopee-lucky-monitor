@@ -84,6 +84,7 @@ const CFG = {
   noDiscover: process.argv.includes("--no-discover"), // 關閉「待機時搜尋發現新場次」
   noBark: process.argv.includes("--no-bark"), // 只收集資料、不推播（給本機圖表用，通知交給雲端）
   menu: process.argv.includes("--menu"),
+  setup: process.argv.includes("--setup"),
   chart: !process.argv.includes("--no-chart"),
 };
 
@@ -263,6 +264,73 @@ async function runMenuText() {
 }
 
 // ----------------------------------------------------------------------------
+// 首次設定精靈（--setup）：互動式引導，設定 Bark key、目標、參數
+async function runSetup() {
+  // 讀取所有輸入（TTY 或 pipe 都適用）
+  const allLines = [];
+  if (process.stdin.isTTY) {
+    // 互動式：逐行詢問
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ask = (q) => new Promise((res) => rl.question(q, (a) => res(a)));
+    // Bark key
+    console.log("\n\x1b[1m╔══════════════════════════════════════════╗");
+    console.log("║            Shopee 監控 - 首次設定精靈        ║");
+    console.log("╚══════════════════════════════════════════╝\x1b[0m\n");
+    const key = (await ask("Bark 推播金鑰（留空跳過）: ")).trim();
+    if (key) { try { writeFileSync("bark-key.txt", key); } catch {} console.log("  ✓ 已儲存 Bark key 至 bark-key.txt"); }
+    else console.log("  ⚠ 未設定 Bark key，僅收集資料模式");
+    const tgt = (await ask("轉盤連結或 module id（留空自動偵測）: ")).trim();
+    if (tgt) {
+      try {
+        if (/^\d{5,9}$/.test(tgt)) {
+          writeFileSync("target.json", JSON.stringify({ event: "", drawmod: +tgt, moduleCursor: +tgt + 1, savedAt: Math.floor(Date.now()/1000) }, null, 2));
+        } else {
+          let id = (tgt.match(/[0-9a-f]{16,}/i) || [])[0]?.toLowerCase();
+          if (!id) id = (tgt.match(/sellerlck\/event\/([0-9a-f]{8,})/i) || [])[1]?.toLowerCase();
+          if (id) { writeFileSync("manual-target.txt", tgt); console.log("  ✓ 已寫入 manual-target.txt"); }
+          else console.log("  ⚠ 無法解析連結");
+        }
+      } catch (e) { console.log("  ⚠ 寫入失敗: " + e.message); }
+    } else console.log("  ⚠ 未設定目標，啟動後自動掃描");
+    const interval = (await ask("輪詢間隔秒數 (預設 30): ")).trim();
+    if (interval) CFG.interval = Math.max(5, +interval || 30);
+    const window = (await ask("統計時間窗秒數 (預設 180): ")).trim();
+    if (window) CFG.window = Math.max(30, +window || 180);
+    const frac = (await ask("非1幣佔比門檻 (0~1, 預設 0.9): ")).trim();
+    if (frac) CFG.frac = Math.min(1, Math.max(0, +frac || 0.9));
+    const minW = (await ask("最少中獎人數 (預設 20): ")).trim();
+    if (minW) CFG.minWinners = Math.max(1, +minW || 20);
+    const ka = (await ask("活動結束後自動待機接新場次? (y/N): ")).trim().toLowerCase();
+    CFG.keepAlive = ka === "y" || ka === "yes";
+    rl.close();
+  } else {
+    // pipe 模式：讀取全部行
+    const rl = readline.createInterface({ input: process.stdin });
+    for await (const line of rl) allLines.push(line);
+    const [key, tgt, interval, window, frac, minW, ka] = allLines;
+    if (key && key.trim()) { try { writeFileSync("bark-key.txt", key.trim()); } catch {} console.log("  ✓ 已儲存 Bark key"); }
+    if (tgt && tgt.trim()) {
+      const t = tgt.trim();
+      if (/^\d{5,9}$/.test(t)) writeFileSync("target.json", JSON.stringify({ event: "", drawmod: +t, moduleCursor: +t + 1, savedAt: Math.floor(Date.now()/1000) }, null, 2));
+      else writeFileSync("manual-target.txt", t);
+    }
+    if (interval && interval.trim()) CFG.interval = Math.max(5, +interval || 30);
+    if (window && window.trim()) CFG.window = Math.max(30, +window || 180);
+    if (frac && frac.trim()) CFG.frac = Math.min(1, Math.max(0, +frac || 0.9));
+    if (minW && minW.trim()) CFG.minWinners = Math.max(1, +minW || 20);
+    CFG.keepAlive = (ka || "").trim().toLowerCase() === "y";
+  }
+  console.log("\n\x1b[1m設定摘要：\x1b[0m");
+  console.log(`  interval    = ${CFG.interval} 秒`);
+  console.log(`  window      = ${CFG.window} 秒`);
+  console.log(`  frac        = ${CFG.frac} (非1幣佔比門檻)`);
+  console.log(`  min-winners = ${CFG.minWinners} 人`);
+  console.log(`  keep-alive  = ${CFG.keepAlive ? "開啟" : "關閉"}`);
+  console.log("\n設定完成！執行以下指令開始監控：");
+  console.log("  node monitor.mjs --keep-alive" + (process.argv.includes("--no-bark") ? "" : ""));
+}
+
+// ----------------------------------------------------------------------------
 // 監視目標解析：優先序 --event/--url > 環境變數 > target.json（上次記住的）> 內建預設
 function loadTarget() {
   try {
@@ -277,6 +345,7 @@ function saveTarget() {
   try { writeFileSync(TARGET_FILE, JSON.stringify({ event: MODULE_ONLY ? "" : EVENT, drawmod: DRAWMOD, moduleCursor, savedAt: Math.floor(now()) }, null, 2)); } catch {}
 }
 loadTarget();
+try { const k = readFileSync("bark-key.txt", "utf8").trim(); if (k && !CFG.barkKey) CFG.barkKey = k; } catch {}
 const cliEventId =
   extractEventId(arg("url", process.env.EVENT_URL || "")) ||
   (arg("event", process.env.EVENT || "").toLowerCase() || null);
@@ -766,7 +835,7 @@ async function main() {
       log(`⚠ --link 處理失敗: ${e.message.slice(0, 80)}`);
     }
   }
-  if (!CFG.barkKey && !CFG.once && !CFG.noBark && !CFG.menu) {
+  if (!CFG.barkKey && !CFG.once && !CFG.noBark && !CFG.menu && !CFG.setup) {
     console.error("❌ 請設定 Bark key：BARK_KEY=xxx node monitor.mjs  （或 --bark-key xxx）\n   沒有 key 會無法推播。先跑 node monitor.mjs --test 驗證。");
     process.exit(1);
   }
@@ -774,6 +843,10 @@ async function main() {
     log("🧪 --once 乾跑一輪（不推播、不循環）…");
     log("設定 window=" + CFG.window + "s 通知門檻=非1幣≥" + Math.round(CFG.frac * 100) + "% minWinners=" + CFG.minWinners + " rows=" + CFG.rows);
     await oneCycle();
+    process.exit(0);
+  }
+  if (CFG.setup) {
+    await runSetup();
     process.exit(0);
   }
   if (CFG.menu) await runMenu();
