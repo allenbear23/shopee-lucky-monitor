@@ -78,6 +78,28 @@ event id 每天換的場合，舊 id 顯示結束但 feed 突然又在滾 → �
 
 ---
 
+### 主動發現轉盤：--discover
+
+如果你想慢慢找出更多活躍轉盤，可用 `--discover` 掃描一段 module id 範圍，列出目前活躍的轉盤，**不開始監控**，適合用來建立 `discovered-modules.json` 清單：
+
+```bash
+# 掃描 module 395600 ～ 396099（共 500 個）
+node monitor.mjs --discover --scan-from 395600 --scan-range 500
+
+# 從目前 DRAWMOD 開始掃 1000 個
+node monitor.mjs --discover --scan-range 1000
+```
+
+掃描時會顯示每個活躍 module 的最近中獎時間、筆數、1幣/非1幣分佈，發現的 module 會自動寫入 `discovered-modules.json`。之後可逐個監控：
+
+```bash
+node monitor.mjs --link "395626" --keep-alive --no-bark
+```
+
+> ⚠️ 掃描會對 Shopee 後端產生請求，建議 `--scan-range` 不要太大，並保持預設間隔，避免被判定為濫用。
+
+---
+
 ## 四、整體運作流程
 
 ```
@@ -110,6 +132,7 @@ event id 每天換的場合，舊 id 顯示結束但 feed 突然又在滾 → �
 | `--menu` | 互動式參數選單（方向鍵調整） | 關 |
 | `--chart` / `--no-chart` | 終端即時 ASCII 折線圖（執行中按 `c` 切換） | 關 |
 | `--link` / `--add` | 貼連結或 module id 切換 | - |
+| `--discover` | 掃描 module id 範圍，列出活躍轉盤，不開始監控（用來慢慢建立轉盤清單） | - |
 | `--once` | 只跑一輪就結束 | 關 |
 | `--test` | 測試 Bark | 關 |
 
@@ -123,6 +146,7 @@ event id 每天換的場合，舊 id 顯示結束但 feed 突然又在滾 → �
 | `dashboard.mjs` | 圖表儀表板（http://127.0.0.1:8787） |
 | `target.json` | 目前目標（自動更新） |
 | `manual-target.txt` | 手動貼連結切換（用完清空） |
+| `discovered-modules.json` | 累積發現的活躍轉盤 module id（--discover 掃描或自動發現時記錄） |
 | `feed-data.jsonl` | 歷史統計資料 |
 | `monitor.log` | 執行紀錄 |
 
