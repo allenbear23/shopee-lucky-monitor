@@ -40,6 +40,7 @@ let DRAWMOD = 391057; // Service.LUCKY_DRAW module_id（每個 event 不同，�
 let MODULE_ONLY = false; // true = 只知 module、不知 event id（靠 module 掃描自動接期）
 let moduleCursor = 0;    // module 掃描游標（從上次已知 module 往上找）
 const TARGET_FILE = "target.json"; // 記住目前監視目標，重啟不遺失
+const DISCOVERED_FILE = "discovered-modules.json"; // 累積發現的活躍轉盤 module id
 const APPID = "9bv5119Po61HKw0Tdn"; // 從前端 bundle 解出的 appid
 const DATA_FILE = "feed-data.jsonl"; // 每輪統計 → 供 dashboard 讀取畫圖
 const UA =
@@ -344,6 +345,25 @@ function loadTarget() {
 function saveTarget() {
   try { writeFileSync(TARGET_FILE, JSON.stringify({ event: MODULE_ONLY ? "" : EVENT, drawmod: DRAWMOD, moduleCursor, savedAt: Math.floor(now()) }, null, 2)); } catch {}
 }
+// 已發現活躍轉盤清單（累積，不會覆蓋）
+let discovered = new Set();
+function loadDiscovered() {
+  try {
+    const j = JSON.parse(readFileSync(DISCOVERED_FILE, "utf8"));
+    if (Array.isArray(j)) discovered = new Set(j.map(Number).filter((x) => !isNaN(x)));
+  } catch {}
+}
+function saveDiscovered() {
+  try { writeFileSync(DISCOVERED_FILE, JSON.stringify([...discovered].sort((a, b) => a - b), null, 2)); } catch {}
+}
+function addDiscovered(id, reason) {
+  id = +id;
+  if (!id || discovered.has(id)) return;
+  discovered.add(id);
+  saveDiscovered();
+  log(`📋 紀錄活躍轉盤 module ${id}（${reason}）`);
+}
+loadDiscovered();
 loadTarget();
 try { const k = readFileSync("bark-key.txt", "utf8").trim(); if (k && !CFG.barkKey) CFG.barkKey = k; } catch {}
 const cliEventId =
@@ -470,6 +490,7 @@ async function switchEvent(id, reason) {
   MODULE_ONLY = false;
   moduleCursor = DRAWMOD + 1;
   saveTarget();
+  addDiscovered(DRAWMOD, reason);
   announcedEnd = false;
   feedMode = false;
   staleCycles = 0;
@@ -516,6 +537,7 @@ async function discoverActiveModule() {
       const latest = Math.max(...rows.map((x) => x.lucky_time || 0));
       if (now() - latest > ACTIVE_LAG) continue;
       if (!rows.some((x) => x.package_name === "1 活動蝦幣")) continue;
+      addDiscovered(id, "自動掃描發現");
       try { saveTarget(); } catch {}
       return id;
     } catch {}
@@ -845,6 +867,46 @@ async function main() {
     } catch (e) {
       log(`⚠ --link 處理失敗: ${e.message.slice(0, 80)}`);
     }
+  }
+  // --discover：掃描 module id 範圍，列出活躍轉盤，不開始監控（用來慢慢建立轉盤清單）
+  if (process.argv.includes("--discover")) {
+    const scanRange = +arg("scan-range", "500");
+    const base = +DRAWMOD || 0;
+    const start = +arg("scan-from", String(base + 1));
+    const end = start + scanRange - 1;
+    console.log(`\n🔍 開始掃描 module ${start} ～ ${end}（共 ${scanRange} 個，每批 40 個，間隔 250ms）\n`);
+    let found = [];
+    for (let batchStart = start; batchStart <= end; batchStart += 40) {
+      const batchEnd = Math.min(batchStart + 39, end);
+      for (let id = batchStart; id <= batchEnd; id++) {
+        try {
+          const r = await fetch(`https://games.shopee.tw/gameplatform/api/v2/goluckydraw/prize/list/module/${id}?appid=${APPID}&offset=0&limit=10`, {
+            headers: { "User-Agent": UA, Referer: "https://games.shopee.tw/sellerlck/" },
+          });
+          if (!r.ok) continue;
+          const j = await r.json().catch(() => null);
+          const rows = (j && j.data) || [];
+          if (!rows.length) continue;
+          const latest = Math.max(...rows.map((x) => x.lucky_time || 0));
+          if (now() - latest > ACTIVE_LAG) continue;
+          if (!rows.some((x) => x.package_name === "1 活動蝦幣")) continue;
+          const n1 = rows.filter((x) => x.package_name === "1 活動蝦幣").length;
+          const nOther = rows.length - n1;
+          found.push({ id, latest, total: rows.length, n1, nOther });
+          addDiscovered(id, "--discover 掃描發現");
+          process.stdout.write(`  ✅ module ${id}  活躍（最近 ${Math.round(now() - latest)}s 前，${rows.length}筆，1幣${n1}/非1幣${nOther}）\n`);
+        } catch {}
+        await sleep(250);
+      }
+      if (batchEnd < end) {
+        process.stdout.write(`  ⏸ 批次 ${batchStart}～${batchEnd} 完成，暫停 2s 後繼續...\n`);
+        await sleep(2000);
+      }
+    }
+    console.log(`\n📋 掃描結束，共發現 ${found.length} 個活躍轉盤：`);
+    found.forEach((f) => console.log(`   module ${f.id}`));
+    console.log(`\n已寫入 ${DISCOVERED_FILE}，可用 --link "<module_id>" 逐個監控。`);
+    process.exit(0);
   }
   if (!CFG.barkKey && !CFG.once && !CFG.noBark && !CFG.menu && !CFG.setup) {
     if (process.stdin.isTTY) {
