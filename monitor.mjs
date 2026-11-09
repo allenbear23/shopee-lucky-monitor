@@ -536,7 +536,6 @@ async function discoverActiveModule() {
       if (!rows.length) continue;
       const latest = Math.max(...rows.map((x) => x.lucky_time || 0));
       if (now() - latest > ACTIVE_LAG) continue;
-      if (!rows.some((x) => x.package_name === "1 活動蝦幣")) continue;
       addDiscovered(id, "自動掃描發現");
       try { saveTarget(); } catch {}
       return id;
@@ -889,7 +888,6 @@ async function main() {
           if (!rows.length) continue;
           const latest = Math.max(...rows.map((x) => x.lucky_time || 0));
           if (now() - latest > ACTIVE_LAG) continue;
-          if (!rows.some((x) => x.package_name === "1 活動蝦幣")) continue;
           const n1 = rows.filter((x) => x.package_name === "1 活動蝦幣").length;
           const nOther = rows.length - n1;
           found.push({ id, latest, total: rows.length, n1, nOther });
