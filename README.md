@@ -133,6 +133,8 @@ node monitor.mjs --link "395626" --keep-alive --no-bark
 | `--chart` / `--no-chart` | 終端即時 ASCII 折線圖（執行中按 `c` 切換） | 關 |
 | `--link` / `--add` | 貼連結或 module id 切換 | - |
 | `--discover` | 掃描 module id 範圍，列出活躍轉盤，不開始監控（用來慢慢建立轉盤清單） | - |
+| `--volume-spike` | 中獎人數暴增倍數（窗內中獎數 ≥ 近期平均 × 此倍數 → 通知） | 2.0 |
+| `--volume-window` | 計算暴增基準的歷史輪數 | 10 |
 | `--once` | 只跑一輪就結束 | 關 |
 | `--test` | 測試 Bark | 關 |
 

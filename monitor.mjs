@@ -58,6 +58,8 @@ const DEFAULT = {
   cooldown: 600, // 同一波 burst 不重複通知(秒)
   freshLag: 240, // feed 最新一筆落後超過此秒數 → 標 stale（僅記錄）
   rows: 300, // 每次抓最新幾筆（API 單頁上限 100 → 3 頁）
+  volumeSpike: 2.0, // 中獎人數暴增倍數：窗內中獎數 ≥ 平均值 × 此倍數 → 觸發
+  volumeWindow: 10, // 計算平均基準的歷史輪數
 };
 
 function arg(name, def) {
@@ -75,6 +77,8 @@ const CFG = {
   cooldown: +arg("cooldown", DEFAULT.cooldown),
   freshLag: +arg("fresh-lag", DEFAULT.freshLag),
   rows: +arg("rows", DEFAULT.rows),
+  volumeSpike: +arg("volume-spike", DEFAULT.volumeSpike),
+  volumeWindow: +arg("volume-window", DEFAULT.volumeWindow),
   barkKey: arg("bark-key", process.env.BARK_KEY || ""),
   barkUrl: arg("bark-url", process.env.BARK_URL || "https://api.day.app"),
   ttl: +arg("ttl", process.env.BARK_TTL || 600), // 通知在手機上保留秒數(-> 分, Bark ttl 單位=秒)
@@ -91,6 +95,7 @@ const CFG = {
 
 // 終端 ASCII 折線圖
 const chartHist = []; // [{t, total, non, frac}]
+const totalHist = []; // 滾動中獎人數基準（用於暴增偵測）
 function sparkline(data, maxW = 40) {
   if (!data.length) return "";
   const vals = data.slice(-maxW);
@@ -119,9 +124,11 @@ function drawChart() {
 const MENU_ITEMS = [
   { key: "interval", label: "每幾秒抓一次 (秒)", min: 5, step: 5 },
   { key: "window", label: "統計時間窗 (秒)", min: 30, step: 30 },
-  { key: "min-winners", label: "最少中獎人數才判斷", min: 1, step: 1 },
+  { key: "minWinners", label: "最少中獎人數才判斷", min: 1, step: 1 },
   { key: "frac", label: "非1幣佔比門檻 (0~1)", min: 0.1, step: 0.1, dec: 1 },
   { key: "cooldown", label: "同一波冷卻 (秒)", min: 0, step: 60 },
+  { key: "volumeSpike", label: "中獎暴增倍數 (x)", min: 1.1, step: 0.1, dec: 1 },
+  { key: "volumeWindow", label: "暴增基準輪數", min: 3, step: 1 },
 ];
 
 function menuValue(item) {
@@ -376,6 +383,7 @@ const now = () => Date.now() / 1000;
 const fmt = (t) => new Date(t * 1000).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" });
 
 let lastAlert = 0;
+let lastVolumeAlert = 0;
 let failStreak = 0;
 let announcedEnd = false;
 let feedMode = false;      // true = event id 已換（舊 id 顯示結束但 feed 仍在滾），改以 feed 活動判斷
@@ -496,6 +504,8 @@ async function switchEvent(id, reason) {
   staleCycles = 0;
   sawActive = false;
   lastAlert = 0;
+  lastVolumeAlert = 0;
+  totalHist.length = 0;
   log(`🎯 切換監視目標 → event ${EVENT} / module ${DRAWMOD}（${reason}）`);
 }
 
@@ -510,6 +520,8 @@ async function switchModule(mod, reason) {
   staleCycles = 0;
   sawActive = true;
   lastAlert = 0;
+  lastVolumeAlert = 0;
+  totalHist.length = 0;
   log(`🎯 切換監視目標 → module ${DRAWMOD}（${reason}；event id 未知，走 feed 模式）`);
 }
 
@@ -675,6 +687,15 @@ async function oneCycle() {
     // 只有「非1幣佔比 ≥ 門檻（預設 90%）」才通知；不再用筆數門檻
     const hit = enough && frac >= CFG.frac * 100;
     let alerted = 0;
+
+    // 中獎人數暴增偵測：窗內中獎數 ≥ 近期平均 × volumeSpike 倍 → 通知
+    // （用於偵測「哭臉 type 0」等無法用非1幣率捕捉的爆量）
+    const baseTotalAvg = totalHist.length >= 3
+      ? totalHist.slice(-CFG.volumeWindow).reduce((a, b) => a + b, 0) / Math.min(totalHist.length, CFG.volumeWindow)
+      : 0;
+    const volumeHit = enough && baseTotalAvg > 0 && total >= baseTotalAvg * CFG.volumeSpike;
+    let volumeAlerted = 0;
+
     if (hit && now() - lastAlert >= CFG.cooldown) {
       lastAlert = now();
       const pct = (n) => (total ? ((n / total) * 100).toFixed(1) : "0.0");
@@ -693,12 +714,33 @@ async function oneCycle() {
       await sendBark(title, body);
       alerted = 1;
     }
+
+    // 爆量偵測通知（獨立於非1幣率通知）
+    if (volumeHit && !hit && now() - lastVolumeAlert >= CFG.cooldown) {
+      lastVolumeAlert = now();
+      const pct = (n) => (total ? ((n / total) * 100).toFixed(1) : "0.0");
+      const spikeRatio = baseTotalAvg > 0 ? (total / baseTotalAvg).toFixed(1) : "?";
+      const title = `📈 中獎人數暴增 ${spikeRatio}×（近${CFG.window}秒 ${total} 人）`;
+      const body =
+        `近${CFG.window}秒 ${total} 人中獎（近期平均 ${Math.round(baseTotalAvg)} 人，${spikeRatio} 倍）\n` +
+        `獨立用戶 ${uniqUsers} 人\n` +
+        `各獎率：1幣 ${pct(nCoin1)}%｜30券 ${pct(n30)}%｜50券 ${pct(n50)}%｜100券 ${pct(n100)}%｜10幣 ${pct(nCoin10)}%\n` +
+        `※ 可能出現大量低價值獎項（哭臉 type 0 等）\n` +
+        `feed落後${Math.round(lag)}s，離結束≈${leftMin == null ? "?" : leftMin}分`;
+      await sendBark(title, body);
+      volumeAlerted = 1;
+    }
+
+    // 更新滾動基準
+    totalHist.push(total);
+    if (totalHist.length > 50) totalHist.splice(0, totalHist.length - 50);
+
     pushData({
       t: now(), mode: "active",
       lag: Math.round(lag), stale: stale ? 1 : 0,
       win: CFG.window, total, non: non.length, frac: +frac.toFixed(1), uniq: uniqUsers,
       n1: nCoin1, n30, n50, n100, n10: nCoin10,
-      leftMin, alert: alerted,
+      leftMin, alert: alerted || volumeAlerted,
     });
     if (CFG.chart) {
       chartHist.push({ t: now(), total, non: non.length, frac: +frac.toFixed(1) });
